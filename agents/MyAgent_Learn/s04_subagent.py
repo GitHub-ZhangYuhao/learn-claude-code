@@ -63,7 +63,8 @@ client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 PLAN_REMINDER_INTERVAL = 3
 
-SYSTEM = f"你是一个Coding Agent {WORKDIR}. 使用任务工具来分配探索任务或子任务."
+SYSTEM = (f"你是一个Coding Agent {WORKDIR}. 使用任务工具来分配探索任务或子任务."
+          f"当你认为一个任务比较复杂时候，优先使用任务工具来分配子任务.")
 SUBAGENT_SYSTEM = f"你是一个 SubCoding Agent {WORKDIR}. 完成给定的任务，然后总结你的发现结果."
 
 class AgentTemplate:

@@ -60,7 +60,8 @@ WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
-SYSTEM = f"You are a coding agent at {WORKDIR}. Use the task tool to delegate exploration or subtasks."
+SYSTEM = (f"You are a coding agent at {WORKDIR}. Use the task tool to delegate exploration or subtasks. "
+          f"if you think the task is complex, use the task tool. prefer use task tool")# 这行是我自己加的
 SUBAGENT_SYSTEM = f"You are a coding subagent at {WORKDIR}. Complete the given task, then summarize your findings."
 
 
