@@ -190,8 +190,17 @@ def run_subagent(prompt: str) -> str:
 
 # -- 父代理工具：基础工具 + 任务分发器 --
 PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task", "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
-     "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}, "description": {"type": "string", "description": "Short description of the task"}}, "required": ["prompt"]}},
+    {
+        "name": "task",
+         "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+         "input_schema":
+         {
+             "type": "object",
+             "properties": {"prompt": {"type": "string"},
+                            "description": {"type": "string", "description": "Short description of the task"}},
+             "required": ["prompt"]
+        }
+     },
 ]
 
 
