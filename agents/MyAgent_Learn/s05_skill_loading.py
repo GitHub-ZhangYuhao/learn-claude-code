@@ -19,6 +19,9 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+import yaml # 导入PyYAML库，用于解析markdown前置内容
+
+
 load_dotenv(override=True)
 
 if os.getenv("ANTHROPIC_BASE_URL"):
@@ -28,7 +31,7 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
-SKILLS_DIR = WORKDIR / "skills"
+SKILLS_DIR = WORKDIR.parent.parent / "skills"
 
 # 技能名称 ， 技能描述 ， 技能文件路径
 @dataclass
@@ -70,26 +73,22 @@ class SkillRegistry:
             self.documents[name] = SkillDocument(manifest=manifest, body=body.strip()) #  {"SkillName" : SkillDocument}  .strip()去掉首尾空格
 
     def _parse_frontmatter(self, text:str) -> tuple[dict, str]:     # ( 技能元数据 , 技能内容 )
-        """
-        解析markdown前置 metadata 和 技能内容
-        """
-        match = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.DOTALL)
         """ r"..."：原始字符串，避免反斜杠转义
             ^---\n：匹配字符串开头的 --- 后跟换行符（前置内容的开始标记）
             (.*?)：第一个捕获组，非贪婪匹配任意字符（捕获 YAML 前置内容）
             \n---\n：匹配换行符后跟 --- 再后跟换行符（前置内容的结束标记）
             (.*)：第二个捕获组，贪婪匹配剩余的所有字符（捕获前置内容后的正文）
             re.DOTALL：特殊标志，使 . 可以匹配换行符（允许捕获组跨越多行） """
+        """解析markdown前置内容，使用PyYAML库"""
+        match = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.DOTALL)
         if not match:
             return {}, text
 
-        # 开始组装 metadata
-        meta = {}
-        for line in match.group(1).strip().splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            meta[key.strip()] = value.strip()
+        try:
+            meta = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError:
+            meta = {}
+
         return meta, match.group(2)
 
     def describe_available(self) -> str:

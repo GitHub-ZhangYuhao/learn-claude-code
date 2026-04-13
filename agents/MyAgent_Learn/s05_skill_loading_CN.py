@@ -20,6 +20,9 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+import yaml # 导入PyYAML库，用于解析markdown前置内容
+
+
 load_dotenv(override=True)
 
 if os.getenv("ANTHROPIC_BASE_URL"):
@@ -28,7 +31,7 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
-SKILLS_DIR = WORKDIR / "skills"
+SKILLS_DIR = WORKDIR.parent.parent / "skills"
 
 
 @dataclass
@@ -68,19 +71,17 @@ class SkillRegistry:
             self.documents[name] = SkillDocument(manifest=manifest, body=body.strip())
 
     def _parse_frontmatter(self, text: str) -> tuple[dict, str]:
-        """解析markdown前置内容"""
+        """解析markdown前置内容，使用PyYAML库"""
         match = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.DOTALL)
         if not match:
             return {}, text
 
-        meta = {}
-        for line in match.group(1).strip().splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            meta[key.strip()] = value.strip()
-        return meta, match.group(2)
+        try:
+            meta = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError:
+            meta = {}
 
+        return meta, match.group(2)
     def describe_available(self) -> str:
         """描述可用的技能"""
         if not self.documents:
