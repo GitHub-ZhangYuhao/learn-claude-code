@@ -64,7 +64,7 @@ class SkillRegistry:
 
         # 遍历技能目录中的所有SKILL.md文件
         for path in sorted(self.skills_dir.rglob("SKILL.md")):
-            meta, body = self._parse_frontmatter(path.read_text())
+            meta, body = self._parse_frontmatter(path.read_text(encoding="utf-8"))
             name = meta.get("name", path.parent.name)
             description = meta.get("description", "No description")
             manifest = SkillManifest(name=name, description=description, path=path)
@@ -101,6 +101,7 @@ class SkillRegistry:
 
         return (
             f"<skill name=\"{document.manifest.name}\">\n"
+            f"Skill_Path : {document.manifest.path}\n"
             f"{document.body}\n"
             "</skill>"
         )
