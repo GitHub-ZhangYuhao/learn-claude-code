@@ -1,0 +1,4 @@
+interface:
+  display_name: "YHTest"
+  short_description: "用于验证技能接入与基础流程的测试技能。"
+  default_prompt: "使用 YHTest 执行快速测试与冒烟检查。"
