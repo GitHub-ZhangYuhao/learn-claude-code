@@ -205,7 +205,7 @@ def run_read(path: str, tool_use_id: str, state: CompactState, limit: int | None
     """读取文件内容"""
     try:
         track_recent_file(state, path)
-        lines = safe_path(path).read_text().splitlines()
+        lines = safe_path(path).read_text(encoding='utf-8').splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... (还有 {len(lines) - limit} 行)"]
         output = "\n".join(lines)
