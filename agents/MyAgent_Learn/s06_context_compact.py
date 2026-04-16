@@ -169,7 +169,9 @@ def summarize_history(message: list) -> str:
     )
     return response.content[0].text.strip()
 
-"""压缩历史对话为摘要 , 这里的focus是可以选择，focus,是由 LLM 的工具调用生成的"""
+"""
+压缩历史对话为摘要 , 这里的focus是可以选择，focus,是由 LLM 的工具调用生成的
+"""
 def compact_history(messages: list, state: CompactState, focus: str | None = None) -> list:
     """压缩历史对话为摘要"""
     # 先将历史对话写入到外部文件中
@@ -356,6 +358,7 @@ def agent_loop(messages: list, state: CompactState) -> None:
             return
 
         result = []
+        manual_compact = False
         for block in response.content :
             if block.type != "tool_use":   #在一次回复中有多个block，例如 think block，text block，tool_call block，如果不是tool_call block，就跳过
                 continue
