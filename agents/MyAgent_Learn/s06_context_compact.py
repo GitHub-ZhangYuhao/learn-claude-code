@@ -13,9 +13,11 @@ s05_skill_loading.py - 技能加载
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import json
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -50,7 +52,7 @@ TOOL_RESULTS_DIR = WORKDIR / ".task outputs" / "tool-results"
 Context Compact class
 """
 @dataclass
-class CompactStata:
+class CompactState:
     """压缩状态记录"""
     has_compacted: bool = False
     last_summary: str = ""
@@ -59,7 +61,8 @@ def estimate_context_size(message: list) -> int:
     """估算上下文长度"""
     return len(str(message))
 
-def track_recent_file(state: CompactStata, path: str) -> None:
+#这需要再读取文件的时候调用
+def track_recent_file(state: CompactState, path: str) -> None:
     """跟踪最近访问的文件"""
     if path in state.recent_files:
         state.recent_files.remove(path)
@@ -93,12 +96,109 @@ def persist_large_output(tool_use_id: str, output:str) -> str:
         f"{preview}\n"
         "</persisted-output>"
     )
-# TODO:collect_tool_result_blocks()
+
+# 将messages中的tool_result对应的输出收集起来
+def collect_tool_result_blocks(messages: list) -> list[tuple[int, int, dict]]:
+    """收集messages中的tool_result对应的输出"""
+    block = []
+    # 遍历messages
+    for message_index,message in enumerate(messages):
+        content = message.get("content")
+        # 工具调用再user输出中，如果不是user输出，或者不是不是列表，跳过
+        if message.get("role") != "user" or not isinstance(content, list):
+            continue
+        #遍历user的信息块，如果是tool_result，收集起来
+        for block_index, block in enumerate(content):
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                block.append((message_index, block_index, block))
+    return block
+
+def micro_compact(message: list) -> list:
+    """微压缩：将旧的工具结果压缩为占位符"""
+    tool_results = collect_tool_result_blocks(message)
+    # 如果总共的工具调用小于3次， 就保留，否则进行工具调用的压缩
+    if len(tool_results) <= KEEP_RECENT_TOOL_RESULTS:
+        return message
+    """
+    切片操作：[:-KEEP_RECENT_TOOL_RESULTS] 是 Python 的切片语法，-KEEP_RECENT_TOOL_RESULTS 表示从末尾开始计数
+    假设：
+    KEEP_RECENT_TOOL_RESULTS = 2
+    tool_results 包含 5 个工具结果：[result1, result2, result3, result4, result5]
+    处理过程：
+    tool_results[:-2] → 获取前 3 个旧结果：[result1, result2, result3]
+    遍历这 3 个旧结果，将长内容替换为占位符
+    保留最近的 2 个结果：result4, result5 不变
+    """
+    # 处理旧的工具结果 假设工具结果有 5个，那么处理 （5-KEEP_RECENT_TOOL_RESULTS） 个结果
+    for _,_,block in tool_results[:-KEEP_RECENT_TOOL_RESULTS]:
+        content = block.get("content", "")
+        #只处理内容超过120个字符的工具结果
+        if not isinstance(content, str) or len(content) <= 120:
+            continue
+        block["content"] = "[早期工具结果已压缩。如需完整详情请重新运行工具。]"
+    return message
+
+#将历史对话写入脚本 , 返回写入文件的路径
+def write_transcript(messages: list) -> Path:
+    """将对话写入记录文件"""
+    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+    path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for message in messages:
+            handle.write(json.dumps(message, default=str) + "\n")
+    return path
+
+# 调用大模型对历史对话进行摘要 , 返回摘要的文本
+def summarize_history(message: list) -> str:
+    conversation = json.dumps(message, default=str)[:80000]  #字符串切片操作，只保留前 80000 个字符
+    prompt = (
+        "请总结这段 agent 的对话， 以便继续工作。 \n"
+        "请保留：\n"
+        "1. 当前目标\n"
+        "2. 重要发现和决策\n"
+        "3. 已读取或修改的文件\n"
+        "4. 剩余工作\n"
+        "5. 用户的约束和偏好\n"
+        "请简洁但具体。 \n\n"
+        f"\n{conversation}"
+           )
+    response = client.messages.create(
+        model = MODEL,
+        messages = [{"role":"user", "content": prompt}],
+        max_tokens = 2000
+    )
+    return response.content[0].text.strip()
+
+"""压缩历史对话为摘要 , 这里的focus是可以选择，focus,是由 LLM 的工具调用生成的"""
+def compact_history(messages: list, state: CompactState, focus: str | None = None) -> list:
+    """压缩历史对话为摘要"""
+    # 先将历史对话写入到外部文件中
+    transcript_path = write_transcript(messages)
+    print(f"[记录已保存到：{transcript_path}]")
+
+    # 调用大模型对历史对话进行摘要
+    summary = summarize_history(messages)
+    if focus:
+        summary += f"\n\n下一步需要保留的焦点: {focus}"
+    if state.recent_files:
+        recent_lines = "\n".join(f"- {path}" for path in state.recent_files)
+        summary += f"\n\n如需可以重新打开的文件：\n{recent_lines}"
+
+    state.has_compacted = True
+    state.last_summary = summary
+
+    return[{
+        "role": "user",
+        "content": (
+            "对话已压缩， agent 可以继续工作。 \n\n"
+            f"{summary}"
+        )
+    }]
 
 '''
 添加工具函数
 '''
-def run_bash(command: str) -> str:
+def run_bash(command: str, tool_use_id: str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(item in command for item in dangerous):
         return "Error: Dangerous command blocked"
@@ -114,15 +214,17 @@ def run_bash(command: str) -> str:
     except subprocess.TimeoutExpired:
         return "Error: Timeout (120s)"
 
-    output = (result.stdout + result.stderr).strip()
-    return output[:50000] if output else "(no output)"
+    output = (result.stdout + result.stderr).strip() or "无输出"
+    return persist_large_output(tool_use_id, output)
 
-def run_read(path: str, limit: int | None = None) -> str:
+def run_read(path: str,tool_use_id: str, state: CompactState, limit: int | None = None) -> str:
     try:
+        track_recent_file(state, path)
         lines = safe_path(path).read_text().splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
-        return "\n".join(lines)[:50000]
+        output =  "\n".join(lines)[:50000]
+        return persist_large_output(tool_use_id, output)
     except Exception as exc:
         return f"Error: {exc}"
 
@@ -145,19 +247,6 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         return f"Edited {path}"
     except Exception as exc:
         return f"Error: {exc}"
-
-'''
-Tool Handler
-**kw：表示接收任意数量的关键字参数
-提取可选的limit参数（使用kw.get("limit")，如果不存在则返回None）
-'''
-TOOL_HANDLERS = {
-    "bash" :        lambda **kw: run_bash(kw["command"]),
-    "read_file":    lambda **kw: run_read(kw["path"], kw.get("limit")),
-    "write_file":   lambda **kw: run_write(kw["path"], kw["content"]),
-    "edit_file":    lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
-    #本章节新增的工具
-}
 
 '''
 Tool Schema
@@ -210,9 +299,35 @@ TOOLS = [
             "required": ["path", "old_text", "new_text"],
         },
     },
+    {
+        "name": "compact",
+        "description": "摘要早期对话，以便在更小的上下文继续工作。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "focus":{"type":"string"}
+            },
+        }
+    },
 
 ]
 
+"""
+工具调用处理函数
+"""
+def execute_tool(block, state: CompactState) -> str:
+    """执行工具调用"""
+    if block.name == "bash":
+        return run_bash(block.input["command"], block.id)
+    if block.name == "read_file":
+        return run_read(block.input["path"], block.id, state, block.input.get("limit"))
+    if block.name == "write_file":
+        return run_write(block.input["path"], block.input["content"])
+    if block.name == "edit_file":
+        return run_edit(block.input["path"], block.input["old_text"], block.input["new_text"])
+    if block.name == "compact":
+        return "正在压缩对话..."
+    return f"位置工具: {block.name}"
 
 # 用于提取大模型的最后的输出
 def extract_text(content) -> str:
@@ -225,7 +340,7 @@ def extract_text(content) -> str:
             texts.append(text)
     return "\n".join(texts).strip()
 
-def agent_loop(messages: list) -> None:
+def agent_loop(messages: list, state: CompactState) -> None:
     while True:
         response = client.messages.create(
             model=MODEL,
@@ -246,12 +361,12 @@ def agent_loop(messages: list) -> None:
                 continue
             # 如果工具调用是 task 处理 SubAgent， 否则调用普通工具
 
-            handler = TOOL_HANDLERS.get(block.name)
-            try:
-                output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-            except Exception as exc:
-                output = f"Error: {exc}"
+            output = execute_tool(block, state)
+            if block.name == "compact":
+                manual_compact = True
+                compact_focus = (block.input or {}).get("focus")
 
+            print(f"> {block.name}: {str(output)[:200]}")
             result.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
@@ -261,8 +376,14 @@ def agent_loop(messages: list) -> None:
         #将工具使用的结果通过 role: user ，加入到消息列表中
         messages.append({"role": "user", "content": result})
 
+        if manual_compact:
+            print("[手动压缩]")
+            messages[:] = compact_history(messages, state, focus=compact_focus)
+
 if __name__ == "__main__":
     history = []
+    compact_state = CompactState()
+
     while True:
         try:
             query = input("\033[36m 用户： >> \033[0m")    # \033[36m：ANSI转义序列，设置文本颜色为青色 ， \033[0m：ANSI转义序列，重置文本格式为默认状态
@@ -270,8 +391,9 @@ if __name__ == "__main__":
             break
         if query.strip().lower() in ("q", "quit", ""):
             break
+
         history.append({"role": "user", "content": query})
-        agent_loop(history)
+        agent_loop(history, compact_state)
 
         final_text = extract_text(history[-1]["content"])
         if final_text:
