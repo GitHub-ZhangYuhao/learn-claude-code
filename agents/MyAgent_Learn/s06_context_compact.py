@@ -13,7 +13,7 @@ s05_skill_loading.py - 技能加载
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from anthropic import Anthropic
@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 import yaml # 导入PyYAML库，用于解析markdown前置内容
 
+from agents.s06_context_compact import PERSIST_THRESHOLD
 
 load_dotenv(override=True)
 
@@ -31,99 +32,40 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
-SKILLS_DIR = WORKDIR.parent.parent / "skills"
 
-# 技能名称 ， 技能描述 ， 技能文件路径
-@dataclass
-class SkillManifest:
-    name: str
-    description: str
-    path: Path
+SYSTEM = (
+    f"你是位于 {WORKDIR} 的编码 agent。"
+    "请逐步持续工作，当对话过长时使用压缩功能。"
+)
 
-
-# 技能文档类，包含技能清单和完整内容
-@dataclass
-class SkillDocument:
-    """ 技能文档类，包含技能清单和完整内容 """
-    manifest: SkillManifest
-    body: str
-
-# 技能注册表， 用于管理和加载技能
-class SkillRegistry:
-    """ 技能注册表， 用于管理和加载技能 """
-    def __init__(self, skills_dir: Path):
-        """初始化技能注册表"""
-        self.skills_dir = skills_dir
-        self.documents: dict[str, SkillDocument] = {} # 技能列表， key为技能名称，value为技能文档
-        self._load_all() # 加载所有技能
-
-    def _load_all(self) -> None:
-        """
-        加载所有技能
-        """
-        if not self.skills_dir.exists():    # exists()：Path 对象的方法，用于检查路径是否存在
-            return
-
-        # 遍历技能目录中的所有 SKILL.md 文件
-        for path in sorted(self.skills_dir.rglob("SKILL.md")):
-            meta, body = self._parse_frontmatter(path.read_text(encoding="utf-8"))
-            name = meta.get("name", path.parent.name)
-            description = meta.get("description", "No description")
-            manifest = SkillManifest(name=name, description=description, path=path)
-            self.documents[name] = SkillDocument(manifest=manifest, body=body.strip()) #  {"SkillName" : SkillDocument}  .strip()去掉首尾空格
-
-    def _parse_frontmatter(self, text:str) -> tuple[dict, str]:     # ( 技能元数据 , 技能内容 )
-        """ r"..."：原始字符串，避免反斜杠转义
-            ^---\n：匹配字符串开头的 --- 后跟换行符（前置内容的开始标记）
-            (.*?)：第一个捕获组，非贪婪匹配任意字符（捕获 YAML 前置内容）
-            \n---\n：匹配换行符后跟 --- 再后跟换行符（前置内容的结束标记）
-            (.*)：第二个捕获组，贪婪匹配剩余的所有字符（捕获前置内容后的正文）
-            re.DOTALL：特殊标志，使 . 可以匹配换行符（允许捕获组跨越多行） """
-        """解析markdown前置内容，使用PyYAML库"""
-        match = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.DOTALL)
-        if not match:
-            return {}, text
-
-        try:
-            meta = yaml.safe_load(match.group(1)) or {}
-        except yaml.YAMLError:
-            meta = {}
-
-        return meta, match.group(2)
-
-    def describe_available(self) -> str:
-        """ 描述可用技能名称和描述 用于塞入到 system prompt 中 """
-        if not self.documents:
-            return "(no skills available)"
-        lines = []
-        for name in sorted(self.documents):
-            manifest = self.documents[name].manifest
-            lines.append(f"- {manifest.name}: {manifest.description}")
-            #lines.append(f"- Skill Path:{manifest.path}")
-        return "\n".join(lines)
-
-    def load_full_text(self, name: str) -> str:
-        document = self.documents.get(name)
-        if not document:
-            know = ", ".join(sorted(self.documents)) or "(none)"
-            return f"Error: Unknow skill {name}. Available skills {know}"
-
-        return (
-            f"<skill name = \"{document.manifest.name}\">\n"
-            f"Skill_Path : {document.manifest.path}\n"
-            f"{document.body}\n"
-            f"</skill>\n"
-        )
-
-# 初始化技能注册表
-SKILL_REGISTRY = SkillRegistry(SKILLS_DIR)
+CONTEXT_LIMIT = 50000
+KEEP_RECENT_TOOL_RESULTS = 3
+PERSIST_THRESHOLD = 30000
+PREVIEW_CHARS = 2000
+TRANSCRIPT_DIR = WORKDIR / ".transcripts"
+TOOL_RESULTS_DIR = WORKDIR / ".task outputs" / "tool-results"
 
 
-SYSTEM = f"""你是 {WORKDIR} 目录下的编码代理。
-当某项任务在执行前需要专用指令时，请使用 load_skill。
-可用技能：
-{SKILL_REGISTRY.describe_available()}
 """
+Context Compact class
+"""
+@dataclass
+class CompactStata:
+    """压缩状态记录"""
+    has_compacted: bool = False
+    last_summary: str = ""
+    recent_files: list[str] = field(default_factory=list)
+def estimate_context_size(message: list) -> int:
+    """估算上下文长度"""
+    return len(str(message))
+
+def track_recent_file(state: CompactStata, path: str) -> None:
+    """跟踪最近访问的文件"""
+    if path in state.recent_files:
+        state.recent_files.remove(path)
+    state.recent_files.append(path)
+    if len(state.recent_files) > 5:
+        state.recent_files[:] = state.recent_files[-5:]     #只保留5个最近文件
 
 # 安全路径解析函数,确保只在安全工作区内操作
 def safe_path(path_str: str) -> Path:
@@ -131,6 +73,27 @@ def safe_path(path_str: str) -> Path:
     if not path.is_relative_to(WORKDIR):
         raise ValueError(f"Path escapes workspace: {path_str}")
     return path
+
+def persist_large_output(tool_use_id: str, output:str) -> str:
+    """持久化大型输出到磁盘"""
+    if len(output) <= PERSIST_THRESHOLD:
+        return output
+
+    TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    stored_path = TOOL_RESULTS_DIR / f"{tool_use_id}.txt"
+    if not stored_path.exists():
+        stored_path.write_text(output)
+
+    preview = output[:PREVIEW_CHARS]
+    rel_path = stored_path.relative_to(WORKDIR)
+    return (
+        "<persisted-output>\n"
+        f"完整的输出已保存到：{rel_path}"
+        "预览： \n"
+        f"{preview}\n"
+        "</persisted-output>"
+    )
+# TODO:collect_tool_result_blocks()
 
 '''
 添加工具函数
@@ -193,7 +156,7 @@ TOOL_HANDLERS = {
     "read_file":    lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file":   lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":    lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
-    "load_skill":   lambda **kw: SKILL_REGISTRY.load_full_text(kw["name"]),     #本章节新增的工具
+    #本章节新增的工具
 }
 
 '''
@@ -247,15 +210,7 @@ TOOLS = [
             "required": ["path", "old_text", "new_text"],
         },
     },
-    {
-        "name": "load_skill",
-        "description": "Load the full body of a named skill into the current context.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"name": {"type": "string"}},
-            "required": ["name"],
-        },
-    },
+
 ]
 
 
