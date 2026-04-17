@@ -85,7 +85,7 @@ def persist_large_output(tool_use_id: str, output:str) -> str:
     TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stored_path = TOOL_RESULTS_DIR / f"{tool_use_id}.txt"
     if not stored_path.exists():
-        stored_path.write_text(output)
+        stored_path.write_text(output, encoding="UTF-8")
 
     preview = output[:PREVIEW_CHARS]
     rel_path = stored_path.relative_to(WORKDIR)
@@ -167,7 +167,10 @@ def summarize_history(message: list) -> str:
         messages = [{"role":"user", "content": prompt}],
         max_tokens = 2000
     )
-    return response.content[0].text.strip()
+    for block in response.content:
+        if hasattr(block, "text"):
+            return block.text
+    return "未找到压缩对话内容"
 
 """
 压缩历史对话为摘要 , 这里的focus是可以选择，focus,是由 LLM 的工具调用生成的
@@ -222,7 +225,7 @@ def run_bash(command: str, tool_use_id: str) -> str:
 def run_read(path: str,tool_use_id: str, state: CompactState, limit: int | None = None) -> str:
     try:
         track_recent_file(state, path)
-        lines = safe_path(path).read_text().splitlines()
+        lines = safe_path(path).read_text(encoding="UTF-8").splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         output =  "\n".join(lines)[:50000]
@@ -234,7 +237,7 @@ def run_write(path: str, content: str) -> str:
     try:
         file_path = safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content)
+        file_path.write_text(content, encoding="UTF-8")
         return f"Wrote {len(content)} bytes to {path}"
     except Exception as exc:
         return f"Error: {exc}"
@@ -242,10 +245,10 @@ def run_write(path: str, content: str) -> str:
 def run_edit(path: str, old_text: str, new_text: str) -> str:
     try:
         file_path = safe_path(path)
-        content = file_path.read_text()
+        content = file_path.read_text(encoding="UTF-8")
         if old_text not in content:
             return f"Error: Text not found in {path}"
-        file_path.write_text(content.replace(old_text, new_text, 1))
+        file_path.write_text(content.replace(old_text, new_text, 1), encoding="UTF-8")
         return f"Edited {path}"
     except Exception as exc:
         return f"Error: {exc}"
@@ -369,7 +372,7 @@ def agent_loop(messages: list, state: CompactState) -> None:
                 manual_compact = True
                 compact_focus = (block.input or {}).get("focus")
 
-            print(f"> {block.name}: {str(output)[:200]}")
+            print(f"> {block.name}\n: {str(output)[:200]}")
             result.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
