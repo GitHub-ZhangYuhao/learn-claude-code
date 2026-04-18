@@ -243,14 +243,7 @@ def estimate_context_size(message: list) -> int:
     """估算上下文长度"""
     return len(str(message))
 
-#这需要再读取文件的时候调用
-def track_recent_file(state: CompactState, path: str) -> None:
-    """跟踪最近访问的文件"""
-    if path in state.recent_files:
-        state.recent_files.remove(path)
-    state.recent_files.append(path)
-    if len(state.recent_files) > 5:
-        state.recent_files[:] = state.recent_files[-5:]     #只保留5个最近文件
+
 
 # 安全路径解析函数,确保只在安全工作区内操作
 def safe_path(path_str: str) -> Path:
@@ -258,129 +251,6 @@ def safe_path(path_str: str) -> Path:
     if not path.is_relative_to(WORKDIR):
         raise ValueError(f"Path escapes workspace: {path_str}")
     return path
-
-def persist_large_output(tool_use_id: str, output:str) -> str:
-    """持久化大型输出到磁盘"""
-    if len(output) <= PERSIST_THRESHOLD:
-        return output
-
-    TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    stored_path = TOOL_RESULTS_DIR / f"{tool_use_id}.txt"
-    if not stored_path.exists():
-        stored_path.write_text(output, encoding="UTF-8")
-
-    preview = output[:PREVIEW_CHARS]
-    rel_path = stored_path.relative_to(WORKDIR)
-    return (
-        "<persisted-output>\n"
-        f"完整的输出已保存到：{rel_path}"
-        "预览： \n"
-        f"{preview}\n"
-        "</persisted-output>"
-    )
-
-# 将messages中的tool_result对应的输出收集起来
-def collect_tool_result_blocks(messages: list) -> list[tuple[int, int, dict]]:
-    """收集messages中的tool_result对应的输出"""
-    block = []
-    # 遍历messages
-    for message_index,message in enumerate(messages):
-        content = message.get("content")
-        # 工具调用再user输出中，如果不是user输出，或者不是不是列表，跳过
-        if message.get("role") != "user" or not isinstance(content, list):
-            continue
-        #遍历user的信息块，如果是tool_result，收集起来
-        for block_index, block in enumerate(content):
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                block.append((message_index, block_index, block))
-    return block
-
-def micro_compact(message: list) -> list:
-    """微压缩：将旧的工具结果压缩为占位符"""
-    tool_results = collect_tool_result_blocks(message)
-    # 如果总共的工具调用小于3次， 就保留，否则进行工具调用的压缩
-    if len(tool_results) <= KEEP_RECENT_TOOL_RESULTS:
-        return message
-    """
-    切片操作：[:-KEEP_RECENT_TOOL_RESULTS] 是 Python 的切片语法，-KEEP_RECENT_TOOL_RESULTS 表示从末尾开始计数
-    假设：
-    KEEP_RECENT_TOOL_RESULTS = 2
-    tool_results 包含 5 个工具结果：[result1, result2, result3, result4, result5]
-    处理过程：
-    tool_results[:-2] → 获取前 3 个旧结果：[result1, result2, result3]
-    遍历这 3 个旧结果，将长内容替换为占位符
-    保留最近的 2 个结果：result4, result5 不变
-    """
-    # 处理旧的工具结果 假设工具结果有 5个，那么处理 （5-KEEP_RECENT_TOOL_RESULTS） 个结果
-    for _,_,block in tool_results[:-KEEP_RECENT_TOOL_RESULTS]:
-        content = block.get("content", "")
-        #只处理内容超过120个字符的工具结果
-        if not isinstance(content, str) or len(content) <= 120:
-            continue
-        block["content"] = "[早期工具结果已压缩。如需完整详情请重新运行工具。]"
-    return message
-
-#将历史对话写入脚本 , 返回写入文件的路径
-def write_transcript(messages: list) -> Path:
-    """将对话写入记录文件"""
-    TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with path.open("w", encoding="utf-8") as handle:
-        for message in messages:
-            handle.write(json.dumps(message, default=str) + "\n")
-    return path
-
-# 调用大模型对历史对话进行摘要 , 返回摘要的文本
-def summarize_history(message: list) -> str:
-    conversation = json.dumps(message, default=str)[:80000]  #字符串切片操作，只保留前 80000 个字符
-    prompt = (
-        "请总结这段 agent 的对话， 以便继续工作。 \n"
-        "请保留：\n"
-        "1. 当前目标\n"
-        "2. 重要发现和决策\n"
-        "3. 已读取或修改的文件\n"
-        "4. 剩余工作\n"
-        "5. 用户的约束和偏好\n"
-        "请简洁但具体。 \n\n"
-        f"\n{conversation}"
-           )
-    response = client.messages.create(
-        model = MODEL,
-        messages = [{"role":"user", "content": prompt}],
-        max_tokens = 2000
-    )
-    for block in response.content:
-        if hasattr(block, "text"):
-            return block.text
-    return "未找到压缩对话内容"
-
-"""
-压缩历史对话为摘要 , 这里的focus是可以选择，focus,是由 LLM 的工具调用生成的
-"""
-def compact_history(messages: list, state: CompactState, focus: str | None = None) -> list:
-    """压缩历史对话为摘要"""
-    # 先将历史对话写入到外部文件中
-    transcript_path = write_transcript(messages)
-    print(f"[记录已保存到：{transcript_path}]")
-
-    # 调用大模型对历史对话进行摘要
-    summary = summarize_history(messages)
-    if focus:
-        summary += f"\n\n下一步需要保留的焦点: {focus}"
-    if state.recent_files:
-        recent_lines = "\n".join(f"- {path}" for path in state.recent_files)
-        summary += f"\n\n如需可以重新打开的文件：\n{recent_lines}"
-
-    state.has_compacted = True
-    state.last_summary = summary
-
-    return[{
-        "role": "user",
-        "content": (
-            "对话已压缩， agent 可以继续工作。 \n\n"
-            f"{summary}"
-        )
-    }]
 
 '''
 添加工具函数
