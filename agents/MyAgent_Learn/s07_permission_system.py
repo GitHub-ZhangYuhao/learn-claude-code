@@ -48,8 +48,8 @@ client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
 SYSTEM = (
-    f"你是位于 {WORKDIR} 的编码 agent。"
-    "请逐步持续工作，当对话过长时使用压缩功能。"
+    f"""你是一个位于 {WORKDIR} 的编码代理。使用工具来完成任务。
+用户控制权限。某些工具调用可能会被拒绝。"""
 )
 
 # -- 权限模式 --
@@ -211,6 +211,24 @@ class PermissionManager:
         print(f"\n [权限] {tool_name} : {preview}")
         try:
             answer = input("是否批准该操作？(y/n/always): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+
+        if answer == "always":
+            # 添加此工具的永久允许规则
+            self.rules.append({"tool":tool_name, "path":"*", "behavior":"allow"})
+            self.consecutive_denials = 0
+            return True
+        if answer in ("y", "yes"):
+            self.consecutive_denials = 0
+            return True
+
+        # 跟踪拒绝次数以触发熔断
+        self.consecutive_denials += 1
+        if self.consecutive_denials >= self.max_consecutive_denials:
+            print(f"[{self.consecutive_denials}] 次连续拒绝--"
+                  "建议切换到（/plan）计划模式")
+        return False
 
     def _matches(self, rule: dict, tool_name: str, tool_input: dict) -> bool:
         """
@@ -239,10 +257,6 @@ class PermissionManager:
 
 #TODO:
 
-def estimate_context_size(message: list) -> int:
-    """估算上下文长度"""
-    return len(str(message))
-
 
 
 # 安全路径解析函数,确保只在安全工作区内操作
@@ -255,7 +269,7 @@ def safe_path(path_str: str) -> Path:
 '''
 添加工具函数
 '''
-def run_bash(command: str, tool_use_id: str) -> str:
+def run_bash(command: str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(item in command for item in dangerous):
         return "Error: Dangerous command blocked"
@@ -272,16 +286,15 @@ def run_bash(command: str, tool_use_id: str) -> str:
         return "Error: Timeout (120s)"
 
     output = (result.stdout + result.stderr).strip() or "无输出"
-    return persist_large_output(tool_use_id, output)
+    return output
 
-def run_read(path: str,tool_use_id: str, state: CompactState, limit: int | None = None) -> str:
+def run_read(path: str, limit: int | None = None) -> str:
     try:
-        track_recent_file(state, path)
         lines = safe_path(path).read_text(encoding="UTF-8").splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         output =  "\n".join(lines)[:50000]
-        return persist_large_output(tool_use_id, output)
+        return output
     except Exception as exc:
         return f"Error: {exc}"
 
@@ -304,6 +317,16 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         return f"Edited {path}"
     except Exception as exc:
         return f"Error: {exc}"
+
+"""
+工具调用处理函数
+"""
+TOOL_HANDLERS = {
+    "bash":         lambda **kw : run_bash(kw["command"]),
+    "read_file":    lambda **kw : run_read(kw["path"], kw.get("limit")),
+    "write_file":   lambda **kw : run_write(kw["path"], kw["content"]),
+    "edit_file":    lambda **kw : run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+}
 
 '''
 Tool Schema
@@ -356,35 +379,9 @@ TOOLS = [
             "required": ["path", "old_text", "new_text"],
         },
     },
-    {
-        "name": "compact",
-        "description": "摘要早期对话，以便在更小的上下文继续工作。",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "focus":{"type":"string"}
-            },
-        }
-    },
-
 ]
 
-"""
-工具调用处理函数
-"""
-def execute_tool(block, state: CompactState) -> str:
-    """执行工具调用"""
-    if block.name == "bash":
-        return run_bash(block.input["command"], block.id)
-    if block.name == "read_file":
-        return run_read(block.input["path"], block.id, state, block.input.get("limit"))
-    if block.name == "write_file":
-        return run_write(block.input["path"], block.input["content"])
-    if block.name == "edit_file":
-        return run_edit(block.input["path"], block.input["old_text"], block.input["new_text"])
-    if block.name == "compact":
-        return "正在压缩对话..."
-    return f"位置工具: {block.name}"
+
 
 # 用于提取大模型的最后的输出
 def extract_text(content) -> str:
@@ -397,7 +394,7 @@ def extract_text(content) -> str:
             texts.append(text)
     return "\n".join(texts).strip()
 
-def agent_loop(messages: list, state: CompactState) -> None:
+def agent_loop(messages: list, perms: PermissionManager) -> None:
     while True:
         response = client.messages.create(
             model=MODEL,
@@ -417,12 +414,29 @@ def agent_loop(messages: list, state: CompactState) -> None:
         for block in response.content :
             if block.type != "tool_use":   #在一次回复中有多个block，例如 think block，text block，tool_call block，如果不是tool_call block，就跳过
                 continue
-            # 如果工具调用是 task 处理 SubAgent， 否则调用普通工具
 
-            output = execute_tool(block, state)
-            if block.name == "compact":
-                manual_compact = True
-                compact_focus = (block.input or {}).get("focus")
+            # -- 权限检查 -- 通过或者允许后执行工具
+            decision = perms.check(block.name, block.input)
+
+            # 对应 deny
+            if decision["behavior"] == "deny":
+                output = f"权限被拒绝: {decision['reason']}"
+                print(f"  [已拒绝] {block.name}: {decision['reason']}")
+            # 对应 ask
+            elif decision["behavior"] == "ask":
+                if perms.ask_user(block.name, block.input or {}):
+                    #如果询问允许通过，就可以执行工具
+                    handler = TOOL_HANDLERS.get(block.name)
+                    output = handler(**(block.input or {})) if handler else f"未知工具：{block.name}"
+                    print(f"> {block.name} : {str(output)[:200]}")
+                else:
+                    output = f"{block.name} 工具被用户拒绝"
+                    print(f" [用户决绝] {block.name} 工具调用")
+            # 对应 allow
+            else:
+                handler = TOOL_HANDLERS.get(block.name)
+                output = handler(**(block.input or {})) if handler else f"未知工具：{block.name}"
+                print(f"> {block.name} : {str(output)[:200]}")
 
             print(f"> {block.name}\n: {str(output)[:200]}")
             result.append({
@@ -434,14 +448,17 @@ def agent_loop(messages: list, state: CompactState) -> None:
         #将工具使用的结果通过 role: user ，加入到消息列表中
         messages.append({"role": "user", "content": result})
 
-        if manual_compact:
-            print("[手动压缩]")
-            messages[:] = compact_history(messages, state, focus=compact_focus)
 
 if __name__ == "__main__":
-    history = []
-    compact_state = CompactState()
+    # 启动时选择权限模式
+    print("权限模式： default, plan, auto")
+    mode_input = input("模式（default）").strip().lower() or "default"
+    if mode_input not in MODES:
+        mode_input = "default"
+    perms = PermissionManager(mode_input)
+    print(f"当前权限模式：{mode_input}")
 
+    history = []
     while True:
         try:
             query = input("\033[36m 用户： >> \033[0m")    # \033[36m：ANSI转义序列，设置文本颜色为青色 ， \033[0m：ANSI转义序列，重置文本格式为默认状态
@@ -450,8 +467,23 @@ if __name__ == "__main__":
         if query.strip().lower() in ("q", "quit", ""):
             break
 
+        # /mode 命令用于运行时切换模式
+        if query.startswith("/mode"):
+            parts = query.split()
+            if len(parts) == 2 and parts[1] in MODES:
+                perms.mode = parts[1]
+                print(f"已切换到 {[perms.mode]} 模式")
+            else:
+                print(f"用法 /mode <{'|'.join(MODES)}>")
+            continue
+        # /rules 命令用于现实当前规则
+        if query.strip().lower() == "/rules":
+            for i, rule in enumerate(perms.rules):
+                print(f"{i}: {rule}")
+            continue
+
         history.append({"role": "user", "content": query})
-        agent_loop(history, compact_state)
+        agent_loop(history, perms)
 
         final_text = extract_text(history[-1]["content"])
         if final_text:
