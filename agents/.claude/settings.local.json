@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:30010/remote)",
+      "Bash(curl -s http://localhost:30010/api)",
+      "Bash(curl -s http://localhost:30010/help)",
+      "Bash(curl -s -X GET http://localhost:30010/remote/objects)",
+      "Bash(curl -s -X GET http://localhost:30010/remote/object/)",
+      "Bash(curl -s http://localhost:30010/discovery)",
+      "Bash(curl -s http://localhost:30010/status)",
+      "Bash(curl -s -X POST http://localhost:30010/execute_python -H \"Content-Type: application/json\" -d '{\"script\":\"print\\(123\\)\"}')",
+      "Bash(curl -s -X POST http://localhost:30010/python/execute -H \"Content-Type: application/json\" -d '{\"script\":\"print\\(123\\)\"}')",
+      "Bash(curl -s -X POST http://localhost:30010/api/python -H \"Content-Type: application/json\" -d '{\"script\":\"print\\(123\\)\"}')",
+      "Bash(curl -s http://localhost:30010/remote/object -H \"Content-Type: application/json\")",
+      "Bash(curl -s http://localhost:30010/remote/objects -H \"Content-Type: application/json\")",
+      "Bash(curl -s \"http://localhost:30010/api/presets\")",
+      "Bash(curl -s \"http://localhost:30010/remote/presets\")",
+      "Bash(curl -s \"http://localhost:30010/presets\")",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool)",
+      "Bash(python:*)",
+      "mcp__unreal__execute_python",
+      "Bash(UE_CODE='print\\(\"Hello YH\"\\)' python:*)",
+      "Bash(UE_CODE='import unreal; unreal.log\\(\"Hello YH\"\\)' python:*)",
+      "Bash(UE_CODE='print\\(\"测试自定义内容\"\\)' python:*)"
+    ]
+  }
+}

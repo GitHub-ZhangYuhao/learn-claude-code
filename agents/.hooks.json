@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "command": "python .claude/hooks/on_session_start.py",
+        "matcher": "*"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "command": "python .claude/hooks/safety_check.py",
+        "matcher": "bash"
+      },
+      {
+        "command": "python .claude/hooks/log_tool.py",
+        "matcher": "*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "command": "python .claude/hooks/log_result.py",
+        "matcher": "*"
+      }
+    ]
+  }
+}
