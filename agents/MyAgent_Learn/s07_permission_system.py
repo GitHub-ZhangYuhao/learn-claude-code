@@ -410,7 +410,6 @@ def agent_loop(messages: list, perms: PermissionManager) -> None:
             return
 
         result = []
-        manual_compact = False
         for block in response.content :
             if block.type != "tool_use":   #在一次回复中有多个block，例如 think block，text block，tool_call block，如果不是tool_call block，就跳过
                 continue
