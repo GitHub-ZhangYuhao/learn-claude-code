@@ -1,4 +1,4 @@
-﻿# Harness：可扩展性 —— 在不改动循环的情况下注入行为。
+# Harness：可扩展性 —— 在不改动循环的情况下注入行为。
 """
 s08_hook_system_CN.py - Hook 系统
 
@@ -175,6 +175,8 @@ class HookManager:
             except Exception as e:
                 print(f" [hook:{event}] 错误 {e}")
 
+        return result
+
 
 
 # 安全路径解析函数,确保只在安全工作区内操作
@@ -193,7 +195,7 @@ def run_bash(command: str) -> str:
         return "Error: Dangerous command blocked"
     try:
         result = subprocess.run(command, shell=True, cwd=WORKDIR,
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=120, encoding="utf-8"
         )
         out = (result.stdout + result.stderr).strip()
         return out[:50000] if out else "(无输出)"
