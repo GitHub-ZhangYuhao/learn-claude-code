@@ -128,7 +128,7 @@ class MemoryManager:
             return f"错误：type 必须是 {MEMORY_TYPES} 之一"
 
         # 清理名称以用于文件名
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name.lower())
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", name.lower())    # 只允许字母、数字、下划线和短横线
         if not safe_name:
             return "错误：无效的记忆名称"
 
