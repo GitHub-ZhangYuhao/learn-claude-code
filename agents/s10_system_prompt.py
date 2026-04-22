@@ -25,6 +25,7 @@ Key insight: "Prompt construction is a pipeline with boundaries, not one
 big string."
 """
 
+import platform
 import datetime
 import json
 import os
@@ -177,7 +178,7 @@ class SystemPromptBuilder:
             f"Current date: {datetime.date.today().isoformat()}",
             f"Working directory: {self.workdir}",
             f"Model: {MODEL}",
-            f"Platform: {os.uname().sysname}",
+            f"Platform: {platform.system()}",
         ]
         return "# Dynamic context\n" + "\n".join(lines)
 
