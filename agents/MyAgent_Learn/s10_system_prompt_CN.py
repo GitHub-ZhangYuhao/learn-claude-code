@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
-# Harness: assembly -- the system prompt is a pipeline, not a string.
+# Harness: assembly -- 系统提示词是一个流水线，而非一个字符串。
 """
-s10_system_prompt.py - System Prompt Construction
+s10_system_prompt_CN.py - 系统提示词构建
 
-This chapter teaches one core idea:
-the system prompt should be assembled from clear sections, not written as one
-giant hardcoded blob.
+本章讲授一个核心理念：
+系统提示词应该由清晰的段落拼装而成，而不是写成一段巨大的硬编码文本。
 
-Teaching pipeline:
-  1. core instructions
-  2. tool listing
-  3. skill metadata
-  4. memory section
-  5. CLAUDE.md chain
-  6. dynamic context
+教学流水线：
+  1. 核心指令
+  2. 工具列表
+  3. 技能元数据
+  4. 记忆段落
+  5. CLAUDE.md 链
+  6. 动态上下文
 
-The builder keeps stable information separate from information that changes
-often. A simple DYNAMIC_BOUNDARY marker makes that split visible.
+构建器将稳定信息与经常变化的信息分开存放。
+一个简单的 DYNAMIC_BOUNDARY 标记使这种分割一目了然。
 
-Per-turn reminders are even more dynamic. They are better injected as a
-separate user-role system reminder than mixed blindly into the stable prompt.
+每轮次的提醒更加动态。它们更适合作为独立的 user-role 系统提醒注入，
+而不是盲目地混入稳定提示词中。
 
-Key insight: "Prompt construction is a pipeline with boundaries, not one
-big string."
+核心洞察："提示词构建是一个带有边界的流水线，而非一个大字符串。"
 """
 
 import platform
@@ -50,13 +48,13 @@ DYNAMIC_BOUNDARY = "=== DYNAMIC_BOUNDARY ==="
 
 class SystemPromptBuilder:
     """
-    Assemble the system prompt from independent sections.
+    从独立段落拼装系统提示词。
 
-    The teaching goal here is clarity:
-    each section has one source and one responsibility.
+    这里的教学目标很清晰：
+    每个段落只有一个来源和一个职责。
 
-    That makes the prompt easier to reason about, easier to test, and easier
-    to evolve as the agent grows new capabilities.
+    这使得提示词更易于推理、更易于测试，也更容易
+    在智能体获得新能力时逐步演进。
     """
 
     def __init__(self, workdir: Path = None, tools: list = None):
@@ -65,26 +63,26 @@ class SystemPromptBuilder:
         self.skills_dir = self.workdir / "skills"
         self.memory_dir = self.workdir / ".memory"
 
-    # -- Section 1: Core instructions --
+    # -- 第1节：核心指令 --
     def _build_core(self) -> str:
         return (
             f"You are a coding agent operating in {self.workdir}.\n"
-            "Use the provided tools to explore, read, write, and edit files.\n"
-            "Always verify before assuming. Prefer reading files over guessing."
+            "使用提供的工具来探索、读取、写入和编辑文件。\n"
+            "在操作前务必验证，不要凭空猜测。优先读取文件而非猜测内容。"
         )
 
-    # -- Section 2: Tool listings --
+    # -- 第2节：工具列表 --
     def _build_tool_listing(self) -> str:
         if not self.tools:
             return ""
-        lines = ["# Available tools"]
+        lines = ["# 可用工具"]
         for tool in self.tools:
             props = tool.get("input_schema", {}).get("properties", {})
             params = ", ".join(props.keys())
             lines.append(f"- {tool['name']}({params}): {tool['description']}")
         return "\n".join(lines)
 
-    # -- Section 3: Skill metadata (layer 1 from s05 concept) --
+    # -- 第3节：技能元数据（来自 s05 概念的第1层） --
     def _build_skill_listing(self) -> str:
         if not self.skills_dir.exists():
             return ""
@@ -93,8 +91,8 @@ class SystemPromptBuilder:
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
-            text = skill_md.read_text()
-            # Parse frontmatter for name + description
+            text = skill_md.read_text(encoding="utf-8")
+            # 解析 frontmatter 获取名称和描述
             match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
             if not match:
                 continue
@@ -108,9 +106,9 @@ class SystemPromptBuilder:
             skills.append(f"- {name}: {desc}")
         if not skills:
             return ""
-        return "# Available skills\n" + "\n".join(skills)
+        return "# 可用技能\n" + "\n".join(skills)
 
-    # -- Section 4: Memory content --
+    # -- 第4节：记忆内容 --
     def _build_memory_section(self) -> str:
         if not self.memory_dir.exists():
             return ""
@@ -118,7 +116,7 @@ class SystemPromptBuilder:
         for md_file in sorted(self.memory_dir.glob("*.md")):
             if md_file.name == "MEMORY.md":
                 continue
-            text = md_file.read_text()
+            text = md_file.read_text(encoding="utf-8")
             match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)", text, re.DOTALL)
             if not match:
                 continue
@@ -134,62 +132,62 @@ class SystemPromptBuilder:
             memories.append(f"[{mem_type}] {name}: {desc}\n{body}")
         if not memories:
             return ""
-        return "# Memories (persistent)\n\n" + "\n\n".join(memories)
+        return "# 记忆（持久化）\n\n" + "\n\n".join(memories)
 
-    # -- Section 5: CLAUDE.md chain --
+    # -- 第5节：CLAUDE.md 链 --
     def _build_claude_md(self) -> str:
         """
-        Load CLAUDE.md files in priority order (all are included):
-        1. ~/.claude/CLAUDE.md (user-global instructions)
-        2. <project-root>/CLAUDE.md (project instructions)
-        3. <current-subdir>/CLAUDE.md (directory-specific instructions)
+        按优先级顺序加载 CLAUDE.md 文件（全部包含）：
+        1. ~/.claude/CLAUDE.md（用户全局指令）
+        2. <项目根目录>/CLAUDE.md（项目指令）
+        3. <当前子目录>/CLAUDE.md（目录特定指令）
         """
         sources = []
 
-        # User-global
+        # 用户全局
         user_claude = Path.home() / ".claude" / "CLAUDE.md"
         if user_claude.exists():
-            sources.append(("user global (~/.claude/CLAUDE.md)", user_claude.read_text()))
+            sources.append(("用户全局 (~/.claude/CLAUDE.md)", user_claude.read_text(encoding="utf-8")))
 
-        # Project root
+        # 项目根目录
         project_claude = self.workdir / "CLAUDE.md"
         if project_claude.exists():
-            sources.append(("project root (CLAUDE.md)", project_claude.read_text()))
+            sources.append(("项目根目录 (CLAUDE.md)", project_claude.read_text(encoding="utf-8")))
 
-        # Subdirectory -- in real CC, this walks from cwd up to project root
-        # Teaching: check cwd if different from workdir
+        # 子目录 — 在真实 CC 中，这会从 cwd 向上遍历到项目根目录
+        # 教学：如果 cwd 不同于 workdir，则检查 cwd
         cwd = Path.cwd()
         if cwd != self.workdir:
             subdir_claude = cwd / "CLAUDE.md"
             if subdir_claude.exists():
-                sources.append((f"subdir ({cwd.name}/CLAUDE.md)", subdir_claude.read_text()))
+                sources.append((f"子目录 ({cwd.name}/CLAUDE.md)", subdir_claude.read_text(encoding="utf-8")))
 
         if not sources:
             return ""
-        parts = ["# CLAUDE.md instructions"]
+        parts = ["# CLAUDE.md 指令"]
         for label, content in sources:
-            parts.append(f"## From {label}")
+            parts.append(f"## 来自 {label}")
             parts.append(content.strip())
         return "\n\n".join(parts)
 
-    # -- Section 6: Dynamic context --
+    # -- 第6节：动态上下文 --
     def _build_dynamic_context(self) -> str:
         lines = [
-            f"Current date: {datetime.date.today().isoformat()}",
-            f"Working directory: {self.workdir}",
-            f"Model: {MODEL}",
-            f"Platform: {platform.system()}",
+            f"当前日期: {datetime.date.today().isoformat()}",
+            f"工作目录: {self.workdir}",
+            f"模型: {MODEL}",
+            f"平台: {platform.system()}",
         ]
-        return "# Dynamic context\n" + "\n".join(lines)
+        return "# 动态上下文\n" + "\n".join(lines)
 
-    # -- Assemble all sections --
+    # -- 拼装所有段落 --
     def build(self) -> str:
         """
-        Assemble the full system prompt from all sections.
+        从所有段落拼装完整的系统提示词。
 
-        Static sections (1-5) are separated from dynamic (6) by
-        the DYNAMIC_BOUNDARY marker. In real CC, the static prefix
-        is cached across turns to save prompt tokens.
+        静态段落（1-5）与动态段落（6）之间通过
+        DYNAMIC_BOUNDARY 标记分隔。在真实 CC 中，静态前缀
+        会在轮次间缓存以节省提示词 token。
         """
         sections = []
 
@@ -213,7 +211,7 @@ class SystemPromptBuilder:
         if claude_md:
             sections.append(claude_md)
 
-        # Static/dynamic boundary
+        # 静态/动态边界
         sections.append(DYNAMIC_BOUNDARY)
 
         dynamic = self._build_dynamic_context()
@@ -225,10 +223,10 @@ class SystemPromptBuilder:
 
 def build_system_reminder(extra: str = None) -> dict:
     """
-    Build a system-reminder user message for per-turn dynamic content.
+    构建一个 system-reminder 用户消息，用于每轮动态内容。
 
-    The teaching version keeps reminders outside the stable system prompt so
-    short-lived context does not get mixed into the long-lived instructions.
+    教学版本将提醒放在稳定系统提示词之外，这样
+    短生命周期的上下文不会与长生命周期的指令混在一起。
     """
     parts = []
     if extra:
@@ -239,57 +237,57 @@ def build_system_reminder(extra: str = None) -> dict:
     return {"role": "user", "content": content}
 
 
-# -- Tool implementations --
+# -- 工具实现 --
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
     if not path.is_relative_to(WORKDIR):
-        raise ValueError(f"Path escapes workspace: {p}")
+        raise ValueError(f"路径超出工作区范围: {p}")
     return path
 
 
 def run_bash(command: str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(d in command for d in dangerous):
-        return "Error: Dangerous command blocked"
+        return "错误: 已拦截危险命令"
     try:
         r = subprocess.run(command, shell=True, cwd=WORKDIR,
                            capture_output=True, text=True, timeout=120)
         out = (r.stdout + r.stderr).strip()
-        return out[:50000] if out else "(no output)"
+        return out[:50000] if out else "(无输出)"
     except subprocess.TimeoutExpired:
-        return "Error: Timeout (120s)"
+        return "错误: 超时 (120秒)"
 
 
 def run_read(path: str, limit: int = None) -> str:
     try:
-        lines = safe_path(path).read_text().splitlines()
+        lines = safe_path(path).read_text(encoding="utf-8").splitlines()
         if limit and limit < len(lines):
-            lines = lines[:limit] + [f"... ({len(lines) - limit} more)"]
+            lines = lines[:limit] + [f"... (还有 {len(lines) - limit} 行)"]
         return "\n".join(lines)[:50000]
     except Exception as e:
-        return f"Error: {e}"
+        return f"错误: {e}"
 
 
 def run_write(path: str, content: str) -> str:
     try:
         fp = safe_path(path)
         fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content)
-        return f"Wrote {len(content)} bytes"
+        fp.write_text(content, encoding="utf-8")
+        return f"已写入 {len(content)} 字节"
     except Exception as e:
-        return f"Error: {e}"
+        return f"错误: {e}"
 
 
 def run_edit(path: str, old_text: str, new_text: str) -> str:
     try:
         fp = safe_path(path)
-        content = fp.read_text()
+        content = fp.read_text(encoding="utf-8")
         if old_text not in content:
-            return f"Error: Text not found in {path}"
-        fp.write_text(content.replace(old_text, new_text, 1))
-        return f"Edited {path}"
+            return f"错误: 在 {path} 中未找到指定文本"
+        fp.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
+        return f"已编辑 {path}"
     except Exception as e:
-        return f"Error: {e}"
+        return f"错误: {e}"
 
 
 TOOL_HANDLERS = {
@@ -300,26 +298,26 @@ TOOL_HANDLERS = {
 }
 
 TOOLS = [
-    {"name": "bash", "description": "Run a shell command.",
+    {"name": "bash", "description": "运行 shell 命令。",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
-    {"name": "read_file", "description": "Read file contents.",
+    {"name": "read_file", "description": "读取文件内容。",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write content to file.",
+    {"name": "write_file", "description": "将内容写入文件。",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in file.",
+    {"name": "edit_file", "description": "在文件中替换精确匹配的文本。",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
 ]
 
-# Global prompt builder
+# 全局提示词构建器
 prompt_builder = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS)
 
 
 def agent_loop(messages: list):
     """
-    Agent loop with assembled system prompt.
+    使用拼装好的系统提示词运行智能体循环。
 
-    The system prompt is rebuilt each iteration. In real CC, the static
-    prefix is cached and only the dynamic suffix changes per turn.
+    系统提示词在每次迭代时重新构建。在真实 CC 中，静态
+    前缀会被缓存，只有动态后缀在每轮次变化。
     """
     while True:
         system = prompt_builder.build()
@@ -338,9 +336,9 @@ def agent_loop(messages: list):
                 continue
             handler = TOOL_HANDLERS.get(block.name)
             try:
-                output = handler(**(block.input or {})) if handler else f"Unknown: {block.name}"
+                output = handler(**(block.input or {})) if handler else f"未知工具: {block.name}"
             except Exception as e:
-                output = f"Error: {e}"
+                output = f"错误: {e}"
             print(f"> {block.name}: {str(output)[:200]}")
             results.append({
                 "type": "tool_result",
@@ -352,12 +350,12 @@ def agent_loop(messages: list):
 
 
 if __name__ == "__main__":
-    # Show the assembled prompt at startup for educational purposes
+    # 启动时显示拼装好的提示词，用于教学目的
     full_prompt = prompt_builder.build()
     section_count = full_prompt.count("\n# ")
-    print(f"[System prompt assembled: {len(full_prompt)} chars, ~{section_count} sections]")
+    print(f"[系统提示词已拼装: {len(full_prompt)} 字符, 约 {section_count} 个段落]")
 
-    # /prompt command shows the full assembled prompt
+    # /prompt 命令显示完整拼装后的提示词
     history = []
     while True:
         try:
@@ -368,9 +366,9 @@ if __name__ == "__main__":
             break
 
         if query.strip() == "/prompt":
-            print("--- System Prompt ---")
+            print("--- 系统提示词 ---")
             print(prompt_builder.build())
-            print("--- End ---")
+            print("--- 结束 ---")
             continue
 
         if query.strip() == "/sections":
