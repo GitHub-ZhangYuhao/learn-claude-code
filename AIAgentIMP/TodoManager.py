@@ -1,4 +1,4 @@
-﻿
+
 from dataclasses import dataclass, field
 from GlobalConfig import PLAN_REMINDER_INTERVAL
 
@@ -106,35 +106,35 @@ class TodoManager:
         return messages
 
 TODO_TOOL_SCHEMA = [{
-  "type": "function",
-  "function": {
-    "name": "todo",
-    "description": "Rewrite the current session plan for multi-step work.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
+    "type": "function",
+    "function": {
+        "name": "todo",
+        "description": "Rewrite the current session plan for multi-step work.",
+        "parameters": {
             "type": "object",
             "properties": {
-              "content": {"type": "string"},
-              "status": {
-                "type": "string",
-                "enum": ["pending", "in_progress", "completed"]
-              },
-              "activeForm": {
-                "type": "string",
-                "description": "Optional present-continuous label."
-              }
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"]
+                            },
+                            "activeForm": {
+                                "type": "string",
+                                "description": "Optional present-continuous label."
+                            }
+                        },
+                        "required": ["content", "status"]
+                    }
+                }
             },
-            "required": ["content", "status"]
-          }
+            "required": ["items"]
         }
-      },
-      "required": ["items"]
     }
-  }
 }]
 
 # 如果只有一个Agent的话，直接创建一个单例即可，如果有多个Agent，每个Agent都需要一个TodoManager实例，用于管理自己的计划
