@@ -85,11 +85,11 @@ Tool Handler
 提取可选的limit参数（使用kw.get("limit")，如果不存在则返回None）
 '''
 TOOL_HANDLERS = {
-    "bash":       lambda **kw: run_bash(kw["command"]),
-    "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
-    "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
-    "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
-    "todo": lambda **kw: TODO.update(kw["items"]),
+    "bash":             lambda **kw: run_bash(kw["command"]),
+    "read_file":        lambda **kw: run_read(kw["path"], kw.get("limit")),
+    "write_file":       lambda **kw: run_write(kw["path"], kw["content"]),
+    "edit_file":        lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    "todo":             lambda **kw: TODO.update(kw["items"]),
 }
 
 '''
