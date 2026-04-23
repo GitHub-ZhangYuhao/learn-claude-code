@@ -152,7 +152,7 @@ def agent_loop(messages: list):
             messages.append(result)
 
         # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
-        messages = TODO.post_tool_call(tool_name, messages)
+        messages = TODO.post_tool_call(messages)
 
 
 

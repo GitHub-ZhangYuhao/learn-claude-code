@@ -93,7 +93,7 @@ class TodoManager:
         else:
             self.used_todo_tool = False
 
-    def post_tool_call(self, tool_name: str, messages: list) -> list:
+    def post_tool_call(self, messages: list) -> list:
 
         if self.used_todo_tool:
             self.state.rounds_since_update = 0

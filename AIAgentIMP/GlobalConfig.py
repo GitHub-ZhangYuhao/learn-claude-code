@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+PLAN_REMINDER_INTERVAL = 3
 WORKDIR = Path.cwd()
 client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"))
 MODEL = os.environ["MODEL_ID"]
