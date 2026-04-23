@@ -21,9 +21,10 @@ s10_system_prompt_CN.py - 系统提示词构建
 
 核心洞察："提示词构建是一个带有边界的流水线，而非一个大字符串。"
 """
-
+import datetime
 import json
 import os
+import platform
 import re
 import subprocess
 from pathlib import Path
@@ -112,14 +113,113 @@ class SystemPromptBuilder:
         return "# 可用技能\n" + "\n".join(skills)
 
     def _build_memory_section(self) -> str:
-        if not self.memory_dir.exits():
+        if not self.memory_dir.exists():
             return ""
         memories = []
         for md_file in sorted(self.memory_dir.glob("*.md")):
             if md_file.name == "MEMORY.md":
                 continue
             text = md_file.read_text(encoding="utf-8")
-            #TODO: continue
+            match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)", text, re.DOTALL)
+            if not match:
+                continue
+            head, body = match.group(1), match.group(2).strip()
+            meta = {}
+            for line in head.splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    meta[k.strip()] = v.strip()
+            name = meta.get("name", md_file.stem)
+            mem_type = meta.get("type", "project")
+            desc = meta.get("description", "")
+            memories.append(f"[{mem_type}] {name}: {desc}\n{body}")
+        if not memories:
+            return ""
+        return "# 记忆（持久化）\n\n" + "\n\n".join(memories)
+
+    def _build_claude_md(self) -> str:
+        """
+        按优先级顺序加载 CLAUDE.md 文件（全部包含）：
+        1. ~/.claude/CLAUDE.md（用户全局指令）
+        2. <项目根目录>/CLAUDE.md（项目指令）
+        3. <当前子目录>/CLAUDE.md（目录特定指令）
+        """
+        sources = []
+
+        # 用户全局
+        user_claude = Path.home() / ".claude" / "CLAUDE.md"
+        if user_claude.exists():
+            sources.append(("用户全局 (~/.claude/CLAUDE.md)", user_claude.read_text(encoding="utf-8")))
+
+        # 项目根目录
+        project_claude = self.workdir / "CLAUDE.md"
+        if project_claude.exists():
+            sources.append(("项目根目录 (CLAUDE.md)", project_claude.read_text(encoding="utf-8")))
+
+        # 子目录 -- 在真实 CC 中，这会从 cwd 线上遍历到项目根目录
+        # 教学： 如果 cwd 不同于 workdir， 则检查 cwd
+        cwd = Path.cwd()
+        if cwd != self.workdir:
+            subdir_claude = cwd / "CLAUDE.md"
+            if subdir_claude.exists():
+                sources.append((f"子目录 ({cwd.name}/CLAUDE.md)", subdir_claude.read_text(encoding="utf-8")))
+
+        if not sources:
+            return ""
+        parts = ["# CLAUDE.md 指令"]
+        for label, content in sources:
+            parts.append(f"## 来自{label}")
+            parts.append(content.strip())
+        return "\n\n".join(parts)
+
+    def _build_dynamic_context(self) -> str:
+        lines = [
+            f"当前日期：{datetime.date.today().isoformat()}"
+            f"工作目录：{self.workdir}"
+            f"模型：{MODEL}"
+            f"平台：{platform.system()}"
+        ]
+        return "# 动态上下文\n" + "\n".join(lines)
+
+    def build(self) -> str:
+        """
+        从所有段落拼装完整的系统提示词。
+
+        静态段落（1-5）与动态段落（6）之间通过
+        DYNAMIC_BOUNDARY 标记分隔。在真实 CC 中，静态前缀
+        会在轮次间缓存以节省提示词 token。
+        """
+        sections = []
+
+        core = self._build_core()
+        if core:
+            sections.append(core)
+
+        tools = self._build_tool_listing()
+        if tools:
+            sections.append(tools)
+
+        skills = self._build_skill_listing()
+        if skills:
+            sections.append(skills)
+
+        memory = self._build_memory_section()
+        if memory:
+            sections.append(memory)
+
+        claude_md = self._build_claude_md()
+        if claude_md:
+            sections.append(claude_md)
+
+        # 静态/动态边界
+        sections.append(DYNAMIC_BOUNDARY)
+
+        dynamic = self._build_dynamic_context()
+        if dynamic:
+            sections.append(dynamic)
+
+        return "\n\n".join(sections)
+
 
 # 安全路径解析函数,确保只在安全工作区内操作
 def safe_path(path_str: str) -> Path:
@@ -276,7 +376,7 @@ def agent_loop(messages: list) -> None:
     每次调用都会重建系统提示， 使新保存的记忆再同一绘画的下一次 LLM 轮次中可见。
     """
     while True:
-
+        system = prompt_builder.build()
         response = client.messages.create(
             model=MODEL,
             system=system,
@@ -310,6 +410,8 @@ def agent_loop(messages: list) -> None:
 if __name__ == "__main__":
     # 启动时显示拼装号的提示词，用于教学目的
     full_prompt = prompt_builder.build()
+    section_count = full_prompt.count("\n# ")
+    print(f"[系统提示词已拼装： {len(full_prompt)} 字符， 约{section_count} 个段落]")
 
     history = []
     while True:
@@ -320,13 +422,16 @@ if __name__ == "__main__":
         if query.strip().lower() in ("q", "exit", ""):
             break
 
-        # /memories 命令：列出当前记忆
-        if query.strip() == "/memories":
-            if memory_mgr.memories:
-                for name, mem in memory_mgr.memories.items():
-                    print(f" [{mem['type']}] {name} : {mem['description']}")
-            else:
-                print(" (无记忆)")
+        if query.strip() == "/prompt":
+            print("---系统提示词---")
+            print(prompt_builder.build())
+            print("--- 结束 ---")
+            continue
+        if query.strip() == "/sections":
+            prompt = prompt_builder.build()
+            for line in prompt.splitlines():
+                if line.startswith("# ") or line == DYNAMIC_BOUNDARY:
+                    print(f"  {line}")
             continue
 
         history.append({"role": "user", "content": query})
