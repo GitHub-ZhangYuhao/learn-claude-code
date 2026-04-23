@@ -15,6 +15,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from GlobalConfig import *
 from SystemPromptBuilder import SystemPromptBuilder
+from TodoManager import TODO_TOOL_SCHEMA, TODO
 
 load_dotenv(override=True)
 
@@ -78,15 +79,24 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
 
 
 
-# -- The dispatch map: {tool_name: handler} --
+'''
+Tool Handler
+**kw：表示接收任意数量的关键字参数
+提取可选的limit参数（使用kw.get("limit")，如果不存在则返回None）
+'''
 TOOL_HANDLERS = {
     "bash":       lambda **kw: run_bash(kw["command"]),
     "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    "todo": lambda **kw: TODO.update(kw["items"]),
 }
 
-TOOLS = [
+'''
+Tool Schema
+用于给模型描述工具的输入参数和输出结果
+'''
+BASIC_TOOLS = [
     {"type": "function", "function": {
         "name": "bash", "description": "Run a shell command.",
         "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}
@@ -104,6 +114,8 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}
     }},
 ]
+# 添加 代办 工具描述
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA
 
 
 def agent_loop(messages: list):
@@ -133,9 +145,14 @@ def agent_loop(messages: list):
             output =  handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
             print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
             print(output[:200])
+            # 检查是否是用来 计划 工具
+            TODO.check_used_todo_tool(tool_name)
             # 将 toolcall 添加到 messages 历史中
             result = {"role": "tool", "tool_call_id": ToolCall.id,"content": output}
             messages.append(result)
+
+        # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
+        messages = TODO.post_tool_call(tool_name, messages)
 
 
 
