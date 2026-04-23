@@ -109,8 +109,7 @@ TOOLS = [
 def agent_loop(messages: list):
     while True:
         # 构建 系统提示词
-        SystemPrompt = SystemPromptManger.build()
-        messages.insert(0, {"role": "system", "content":SystemPrompt})
+        messages = SystemPromptManger.setup_system_prompt(messages)
 
         response = client.chat.completions.create(
             model=MODEL,

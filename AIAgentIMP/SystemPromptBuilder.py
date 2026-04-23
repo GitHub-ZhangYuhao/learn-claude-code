@@ -176,7 +176,7 @@ class SystemPromptBuilder:
 
         return "\n\n".join(sections)
 
-    def NormalizeSystemPrompt(self, messages: list) -> list:
+    def setup_system_prompt(self, messages: list) -> list:
         # 检查 messages 的第0个，检查他的role是否为system,如果不为system，那么在 0 这个地方 inset systemPrompt, 如果是 system，那么将他的content修改为systemprompt
         system_prompt = self.build()
 
