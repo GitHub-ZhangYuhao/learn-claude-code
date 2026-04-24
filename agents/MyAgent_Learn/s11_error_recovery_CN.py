@@ -67,7 +67,7 @@ TOKEN_THRESHOLD = 50000   # chars / 4 ~ tokens for compact trigger
 
 CONTINUATION_MESSAGE = (
     "输出达到上限。请直接从中断处继续——"
-    "不要总结、不要重复。如有需要可从半句继续。"
+    "不要总结、不要重复。如有需要，可在句中接续发言。"
 )
 
 
@@ -206,7 +206,7 @@ def agent_loop(messages: list):
             try:
                 response = client.messages.create(
                     model=MODEL, system=SYSTEM, messages=messages,
-                    tools=TOOLS, max_tokens=8000,
+                    tools=TOOLS, max_tokens=200,#更容易触发最大上下文
                 )
                 break  # success
 
