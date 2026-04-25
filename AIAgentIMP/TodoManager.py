@@ -16,6 +16,7 @@ class PlanningState:
 
 class TodoManager:
     def __init__(self):
+        self.this_turn_used_todo: bool = False
         self.state = PlanningState()
 
     def update(self, item: list) -> str:
@@ -81,6 +82,8 @@ class TodoManager:
 
     # 输出提醒模型更新计划
     def reminder(self) -> str | None:
+        if not self.this_turn_used_todo:    #如果没有使用 计划工具 直接返回
+            return None
         if not self.state.items:
             return None
         if self.state.rounds_since_update < PLAN_REMINDER_INTERVAL:  #如果距离上次更新轮数小于提醒间隔，不提醒
@@ -90,6 +93,7 @@ class TodoManager:
     def check_used_todo_tool(self, tool_name: str) -> None:
         if tool_name == "todo":
             self.used_todo_tool = True
+            self.this_turn_used_todo = True
         else:
             self.used_todo_tool = False
 
@@ -97,6 +101,7 @@ class TodoManager:
 
         if self.used_todo_tool:
             self.state.rounds_since_update = 0
+            self.this_turn_used_todo = True
         else :
             # 如果没有 使用 计划工具，增加距离上次更新轮数
             self.note_round_without_update()
