@@ -90,8 +90,9 @@ TOOL_HANDLERS = {
     "read_file":        lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file":       lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":        lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
-    "todo":             lambda **kw: MainAgent_TODO.update(kw["items"]),
 }
+#添加TODO工具
+TOOL_HANDLERS["todo"] = lambda **kw: MainAgent_TODO.update(kw["items"])
 
 '''
 Tool Schema
