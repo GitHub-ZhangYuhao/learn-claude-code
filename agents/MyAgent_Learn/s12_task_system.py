@@ -172,6 +172,7 @@ class TaskManager:
             blocked = f"(被阻塞：{t["blockedBy"]})" if t.get("blockedBy") else ""
             owner = f" 负责人={t["owner"]}" if t.get("owner") else ""
             lines.append(f"{marker} # {t["id"]}: {t["subject"]} {owner} {blocked}")
+        return "\n".join(lines)
 
 TASKS = TaskManager(TASKS_DIR)
 
