@@ -194,7 +194,7 @@ class CronScheduler:
     def start(self):
         """加载持久化任务并启动后台检查线程。"""
         self._load_durable()
-        self._thread = threading.Thread(target=self._check_loop, daemon=True)
+        self._thread = threading.Thread(target=self._check_loop, daemon=True, name="Background_Thread")
         self._thread.start()
         count = len(self.tasks)
         if count:
