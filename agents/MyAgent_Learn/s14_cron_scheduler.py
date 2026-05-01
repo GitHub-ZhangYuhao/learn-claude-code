@@ -7,6 +7,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from queue import Queue
@@ -28,6 +29,9 @@ MODEL = os.environ["MODEL_ID"]
 
 SCHEDULED_TASKS_FILE = WORKDIR / ".claude" / "scheduled_tasks.json"
 AUTO_EXPIRY_DAYS = 7
+JITTER_MINUTES = [0, 30]  # 对重复任务避开这些精确分钟
+JITTER_OFFSET_MAX = 4     # 偏移范围（分钟）
+# 教学版本：需要时使用 1-4 分钟的偏移。
 
 SYSTEM = f"你是一个编码代理，工作目录为 {WORKDIR}。使用 background_run 执行长时间运行的命令。"
 
@@ -88,7 +92,7 @@ def _field_matches(field: str, value: int, lo: int, hi: int) -> bool:
 
 class CronScheduler:
     def __init__(self):
-        self.tasks = {}         # 任务字典列表
+        self.tasks = []         # 任务字典列表
         self.queue = Queue()    # 通知队列，queue 是线程安全的通信方式。
         self._stop_event = threading.Event()
         self._thread = None
@@ -103,10 +107,82 @@ class CronScheduler:
         if count:
             print(f"[定时任务] 加载了 {count} 个任务")
 
+    def stop(self):
+        """停止后台线程"""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def create(self, cron_expr: str, prompt: str,
+               recurring: bool = True, durable: bool = False) -> str:
+        """创建新的定时任务，返回任务ID"""
+        task_id = str(uuid.uuid4())[:8]
+        now = time.time()
+        task = {
+            "id": task_id,
+            "cron": cron_expr,
+            "prompt": prompt,
+            "recurring": recurring,
+            "durable": durable,
+            "createdAt":now,
+        }
+
+        # 抖动： 对于重复任务，如果 cron 在 :00 或 :30 触发，
+        # 记录偏移以便稍作延迟
+        if recurring:
+            task["jitter_offset"] = self._compute_jitter(cron_expr)
+
+        self.tasks.append(task)
+        if durable:
+            self._save_durable()
+
+        mode = "重复" if recurring else "单次"
+        store = "持久化" if durable else "仅会话"
+        return f"已创建任务 {task_id} （{mode},{store}）: cron = {cron_expr}"
+
+    def delete(self, task_id: str) -> str:
+        """按照ID删除一个定时任务"""
+        before = len(self.tasks)
+        self.tasks = [t for t in self.tasks if t['id'] != task_id]
+        if len(self.tasks) <= before:
+            self._save_durable()
+            return f"已删除任务 {task_id}"
+        return f"未找到任务 {task_id}"
+
+    def list_tasks(self) -> str:
+        """列出所有定时任务。"""
+        if not self.tasks:
+            return "没有定时任务。"
+        lines = []
+        for t in self.tasks:
+            mode = "重复" if t["recurring"] else "单次"
+            store = "持久化" if t["durable"] else "会话"
+            age_hours = (time.time() - t["createdAt"]) / 3600
+            lines.append(
+                f"  {t['id']}  {t['cron']}  [{mode}/{store}] "
+                f"（已创建 {age_hours:.1f} 小时）：{t['prompt'][:60]}"
+            )
+        return "\n".join(lines)
+
+    def _compute_jitter(self, cron_expr: str) -> int:
+        """如果 cron 在 :00 或 :30 触发，返回一个小偏移（1-4 分钟）。"""
+        fields = cron_expr.strip().split()
+        if len(fields) < 1:
+            return 0
+        minute_field = fields[0]
+        try:
+            minute_val = int(minute_field)
+            if minute_val in JITTER_MINUTES:
+                # 基于表达式哈希的确定性抖动
+                return (hash(cron_expr) % JITTER_OFFSET_MAX) + 1
+        except ValueError:
+            pass
+        return 0
+
     def _check_loop(self):
         """后台线程：每秒检查是否有任务到期。"""
         while not self._stop_event.is_set():
-            now = datetime.datetime.now()
+            now = datetime.now()
             current_minute = now.hour * 60 + now.minute
 
             # 每分钟检查一次， 避免重复触发
@@ -153,7 +229,7 @@ class CronScheduler:
             for tid in expired:
                 print(f"[定时任务] 自动过期： {tid} (超过 {AUTO_EXPIRY_DAYS} 天)")
             for tid in fired_oneshots:
-                print(f"[定时任务] 单词任务已完成并移除：{tid}")
+                print(f"[定时任务] 单次任务已完成并移除：{tid}")
             self._save_durable()
 
     #加载持久化任务到 tasks
@@ -245,6 +321,11 @@ TOOL_HANDLERS = {
     "read_file":        lambda **kw : run_read(kw["path"], kw.get("limit")),
     "write_file":       lambda **kw : run_write(kw["path"], kw["content"]),
     "edit_file":        lambda **kw : run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    # 定时调度工具
+    "cron_create": lambda **kw: scheduler.create(
+        kw["cron"], kw["prompt"], kw.get("recurring", True), kw.get("durable", False)),
+    "cron_delete": lambda **kw: scheduler.delete(kw["id"]),
+    "cron_list":   lambda **kw: scheduler.list_tasks(),
 }
 
 '''
@@ -260,6 +341,20 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
     {"name": "edit_file", "description": "在文件中替换指定文本。",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
+    # 定时调度工具 ToolSchema
+    {"name": "cron_create", "description": "使用 cron 表达式调度重复或单次任务。",
+     "input_schema": {"type": "object", "properties": {
+         "cron": {"type": "string", "description": "5 字段 cron 表达式：'分钟 小时 日 月 星期'"},
+         "prompt": {"type": "string", "description": "任务触发时要注入的提示词"},
+         "recurring": {"type": "boolean", "description": "true=重复，false=单次触发后删除。默认 true。"},
+         "durable": {"type": "boolean", "description": "true=持久化到磁盘，false=仅会话。默认 false。"},
+     }, "required": ["cron", "prompt"]}},
+    {"name": "cron_delete", "description": "按 ID 删除一个定时任务。",
+     "input_schema": {"type": "object", "properties": {
+         "id": {"type": "string", "description": "要删除的任务 ID"},
+     }, "required": ["id"]}},
+    {"name": "cron_list", "description": "列出所有定时任务。",
+     "input_schema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -310,6 +405,16 @@ if __name__ == "__main__":
             break
         if query.strip().lower() in ("q", "exit", ""):
             break
+
+        #定时调度 调试命令
+        if query.strip() == "/cron":
+            print(scheduler.list_tasks())
+            continue
+        if query.strip() == "/test":
+            # 手动入队一条测试通知用于演示
+            scheduler.queue.put("[定时任务 test-0000]:这是一条测试通知")
+            print("[测试通知已入队。它将在你的吓一跳消息中注入。]")
+            continue
 
         history.append({"role": "user", "content": query})
         agent_loop(history)
