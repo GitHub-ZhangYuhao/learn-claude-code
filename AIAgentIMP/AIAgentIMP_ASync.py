@@ -1,0 +1,200 @@
+﻿#!/usr/bin/env python3
+# Harness: tool dispatch -- expanding what the model can reach.
+"""
+AIAgentIMP.py - Tool dispatch + message normalization
+
+Key insight: "The loop didn't change at all. I just added tools."
+"""
+import asyncio
+import json
+import os
+import subprocess
+from pathlib import Path
+
+from openai import OpenAI
+from dotenv import load_dotenv
+from GlobalConfig import *
+from SystemPromptBuilder import SystemPromptBuilder
+from ErrorRecovery import ErrorRecoveryManager
+from TodoManager import TODO_TOOL_SCHEMA, TodoManager
+
+load_dotenv(override=True)
+
+#if os.getenv("OPENAI_BASE_URL"):
+#    os.environ.pop("OPENAI_API_KEY", None)
+
+# WORKDIR = Path.cwd()
+# client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"))
+# MODEL = os.environ["MODEL_ID"]
+
+SystemPromptManger = SystemPromptBuilder()
+
+def safe_path(p: str) -> Path:
+    path = (WORKDIR / p).resolve()
+    if not path.is_relative_to(WORKDIR):
+        raise ValueError(f"Path escapes workspace: {p}")
+    return path
+
+def run_bash(command: str) -> str:
+    dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
+    if any(d in command for d in dangerous):
+        return "Error: Dangerous command blocked"
+    try:
+        r = subprocess.run(command, shell=True, cwd=WORKDIR,
+                           capture_output=True, text=True, timeout=120,
+                           encoding="utf-8", errors="replace")
+        out = (r.stdout + r.stderr).strip()
+        return out[:50000] if out else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Timeout (120s)"
+
+def run_read(path: str, limit: int = None) -> str:
+    try:
+        text = safe_path(path).read_text(encoding="utf-8")
+        lines = text.splitlines()
+        if limit and limit < len(lines):
+            lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
+        return "\n".join(lines)[:50000]
+    except Exception as e:
+        return f"Error: {e}"
+
+def run_write(path: str, content: str) -> str:
+    try:
+        fp = safe_path(path)
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content, encoding="utf-8")
+        return f"Wrote {len(content)} bytes to {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+def run_edit(path: str, old_text: str, new_text: str) -> str:
+    try:
+        fp = safe_path(path)
+        content = fp.read_text(encoding="utf-8")
+        if old_text not in content:
+            return f"Error: Text not found in {path}"
+        fp.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
+        return f"Edited {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+MainAgent_TODO = TodoManager()
+'''
+Tool Handler
+**kw：表示接收任意数量的关键字参数
+提取可选的limit参数（使用kw.get("limit")，如果不存在则返回None）
+'''
+TOOL_HANDLERS = {
+    "bash":             lambda **kw: run_bash(kw["command"]),
+    "read_file":        lambda **kw: run_read(kw["path"], kw.get("limit")),
+    "write_file":       lambda **kw: run_write(kw["path"], kw["content"]),
+    "edit_file":        lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+}
+#添加TODO工具
+TOOL_HANDLERS["todo"] = lambda **kw: MainAgent_TODO.update(kw["items"])
+
+'''
+Tool Schema
+用于给模型描述工具的输入参数和输出结果
+'''
+BASIC_TOOLS = [
+    {"type": "function", "function": {
+        "name": "bash", "description": "Run a shell command.",
+        "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}
+    }},
+    {"type": "function", "function": {
+        "name": "read_file", "description": "Read file contents.",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}
+    }},
+    {"type": "function", "function": {
+        "name": "write_file", "description": "Write content to file.",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}
+    }},
+    {"type": "function", "function": {
+        "name": "edit_file", "description": "Replace exact text in file.",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}
+    }},
+]
+# 添加 代办 工具描述
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA
+
+
+def agent_loop(messages: list):
+    # --[计划工具]-- 初始化,每次对话都要重新初始化
+    MainAgent_TODO = TodoManager()
+    # --[Error Recovery] -- 初始化
+    error_recovery_manager = ErrorRecoveryManager()
+    while True:
+        # 构建 系统提示词
+        messages = SystemPromptManger.setup_system_prompt(messages)
+
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                tools=TOOLS,
+                max_tokens=1000,
+            )
+            # --[Error Recovery] -- 错误恢复决策错误恢复决策
+            recover_decision = error_recovery_manager.choose_recovery(response.choices[0].finish_reason, None)
+        except Exception as e:
+            # --[Error Recovery] -- 错误恢复决策错误恢复决策
+            recover_decision = error_recovery_manager.choose_recovery(None, str(e).lower())
+
+        msg = response.choices[0].message.content
+        if msg !="":
+            messages.append({"role": "assistant", "content": msg})
+            print(msg)
+
+        # --[Error Recovery]--错误恢复处理
+        has_error, need_continue, messages = error_recovery_manager.recovery_by_decision(recover_decision, messages,attempt=1)
+        if has_error:
+            if need_continue:
+                continue
+            else:
+                break
+
+        if response.choices[0].finish_reason != "tool_calls":
+            return
+
+        # 遍历所有的 toolcall
+        for ToolCall in response.choices[0].message.tool_calls:
+            tool_name = ToolCall.function.name
+            tool_args = json.loads(ToolCall.function.arguments)
+            handler = TOOL_HANDLERS.get(tool_name)
+            output =  handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
+            print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
+            print(output[:200])
+            # 检查是否是用来 计划 工具
+            MainAgent_TODO.check_used_todo_tool(tool_name)
+            # 将 toolcall 添加到 messages 历史中
+            result = {"role": "tool", "tool_call_id": ToolCall.id,"content": output}
+            messages.append(result)
+
+        # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
+        messages = MainAgent_TODO.post_tool_call(messages)
+
+history=[]
+new_msg_sem = None #在main中创建
+async def get_user_message():
+    while True:
+        query = await asyncio.to_thread(input, "用户输入：")
+        history.append({"role":"user", "content":query})
+        new_msg_sem.release()
+
+async def run_agent_loop():
+    while True:
+        await new_msg_sem.acquire()
+        agent_loop(history)
+
+async def run_main():
+    global new_msg_sem
+    new_msg_sem = asyncio.Semaphore(0)
+    await asyncio.gather(
+        get_user_message(),
+        run_agent_loop()
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_main())
