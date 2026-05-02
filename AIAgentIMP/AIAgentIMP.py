@@ -18,48 +18,38 @@ from SystemPromptBuilder import SystemPromptBuilder
 from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
-
-load_dotenv(override=True)
-
-#if os.getenv("OPENAI_BASE_URL"):
-#    os.environ.pop("OPENAI_API_KEY", None)
-
-# WORKDIR = Path.cwd()
-# client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"))
-# MODEL = os.environ["MODEL_ID"]
-
-SystemPromptManger = SystemPromptBuilder()
+from TeammateManager import *
 
 
 
 
-MainAgent_TODO = TodoManager()
+_TeammateManager = TeammateManager()
+_MainAgent_TODO = TodoManager()
 '''
 Tool Handler
-**kw：表示接收任意数量的关键字参数
-提取可选的limit参数（使用kw.get("limit")，如果不存在则返回None）
 '''
-
-#添加TODO工具
 TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
-TOOL_HANDLERS["todo"] = lambda **kw: MainAgent_TODO.update(kw["items"])
-
+#添加计划工具
+TOOL_HANDLERS["todo"]               = lambda **kw: _MainAgent_TODO.update(kw["items"])
+#添加Teammate工具
+TOOL_HANDLERS["spawn_teammate"]     = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw["prompt"])
+TOOL_HANDLERS["list_teammates"]      = lambda **kw: _TeammateManager.list_all()
 '''
 Tool Schema
-用于给模型描述工具的输入参数和输出结果
 '''
-# 添加 代办 工具描述
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA
+# 基础工具 + 计划工具 + Teammate工具
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA
 
+_SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS)
 
 def agent_loop(messages: list):
     # --[计划工具]-- 初始化,每次对话都要重新初始化
-    MainAgent_TODO = TodoManager()
+    _MainAgent_TODO = TodoManager()
     # --[Error Recovery] -- 初始化
     error_recovery_manager = ErrorRecoveryManager()
     while True:
         # 构建 系统提示词
-        messages = SystemPromptManger.setup_system_prompt(messages)
+        messages = _SystemPromptManger.setup_system_prompt(messages)
 
         try:
             response = client.chat.completions.create(
@@ -99,13 +89,13 @@ def agent_loop(messages: list):
             print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
             print(output[:200])
             # 检查是否是用来 计划 工具
-            MainAgent_TODO.check_used_todo_tool(tool_name)
+            _MainAgent_TODO.check_used_todo_tool(tool_name)
             # 将 toolcall 添加到 messages 历史中
             result = {"role": "tool", "tool_call_id": ToolCall.id,"content": output}
             messages.append(result)
 
         # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
-        messages = MainAgent_TODO.post_tool_call(messages)
+        messages = _MainAgent_TODO.post_tool_call(messages)
 
 
 

@@ -37,9 +37,9 @@ class SystemPromptBuilder:
                 "required": ["command"],
             },
             """
-            props = tool.get("input_schema", {}).get("properties", {})  # "properties": {"command": {"type": "string"}},
+            props = tool["function"].get("parameters", {}).get("properties", {})  # "properties": {"command": {"type": "string"}},
             params = ", ".join(props.keys())
-            lines.append(f"- {tool['name']}:({params}): {tool['description']}")
+            lines.append(f"- {tool['function']['name']}:({params}): {tool['function']['description']}")
         return  "\n".join(lines)
 
     # -- 第3节:技能元数据 --
@@ -176,9 +176,10 @@ class SystemPromptBuilder:
 
         return "\n\n".join(sections)
 
-    def setup_system_prompt(self, messages: list) -> list:
+    def setup_system_prompt(self, messages: list, system_prompt: str = "") -> list:
         # 检查 messages 的第0个，检查他的role是否为system,如果不为system，那么在 0 这个地方 inset systemPrompt, 如果是 system，那么将他的content修改为systemprompt
-        system_prompt = self.build()
+        if system_prompt == "":
+            system_prompt = self.build()
 
         role = messages[0].get("role","")
         if role != "system":
