@@ -14,3 +14,4 @@ PLAN_REMINDER_INTERVAL = 3  # Todo 工具提醒间隔，单位轮数
 WORKDIR = Path.cwd()
 client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI_API_KEY"))
 MODEL = os.environ["MODEL_ID"]
+TEAM_DIR = WORKDIR / ".team"
