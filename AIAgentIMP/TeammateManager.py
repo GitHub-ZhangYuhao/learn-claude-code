@@ -5,102 +5,10 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 
-#TODO: 完成消息传输
-class MessageBus:
-    def __init__(self, inbox_dir: Path = INBOX_DIR):
-        self.dir = inbox_dir
-        self.dir.mkdir(parents=True, exist_ok=True)
 
-    # 发送消息，写入内容目标队友的邮箱文件
-    def send(self, sender: str, to: str, content: str,
-             msg_type:str = "message", extra: dict = None) -> str:
-        if msg_type not in VALID_MSG_TYPES:
-            return f"错误：无效的消息类型 {msg_type}。 有效类型为：{VALID_MSG_TYPES}"
-        msg = {
-            "type"      : msg_type,
-            "from"      : sender,
-            "content"   : content,
-            "timestamp" : time.time(),
-        }
-        if extra:
-            msg.update(extra)
-        inbox_path = self.dir / f"{to}.jsonl"
-        with open(inbox_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        return f"{sender} 已发送 {msg_type} 消息到 {to}"
 
-    # 读取邮箱内容
-    def read_inbox(self, name: str) -> list:
-        inbox_path = self.dir / f"{name}.jsonl"
-        if not inbox_path.exists():
-            return []
-        messages = []
-        for line in inbox_path.read_text(encoding="utf-8").strip().splitlines():
-            if line:
-                messages.append(json.loads(line))
-        inbox_path.write_text("", encoding="utf-8")
-        return messages
 
-    # 广播消息给所有队友
-    def broadcast(self, sender:str, content:str, teammates:list) -> str:
-        count = 0
-        for name in teammates:
-            if name != sender:
-                self.send(sender, name, content, "broadcast")
-                count += 1
-        return f"已广播给 {count} 个队友"
 
-    # 封装ToolSchema
-    @staticmethod
-    def messageBus_ToolSchema() -> list:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "send_message",
-                    "description": "Send a message to a teammate's inbox.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "to": {"type": "string"},
-                            "content": {"type": "string"},
-                            "msg_type": {"type": "string", "enum": list(VALID_MSG_TYPES)}
-                        },
-                        "required": ["sender", "to", "content"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_inbox",
-                    "description": "Read and drain the lead's inbox.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"}
-                        },
-                        "required": ["name"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "broadcast",
-                    "description": "Send a message to all teammates.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "content": {"type": "string"}
-                        },
-                        "required": ["content"]
-                    }
-                }
-            }
-        ]
-
-_MessageBus = MessageBus()
 
 VALID_MSG_TYPES = {
     "message",
@@ -250,13 +158,10 @@ class TeammateManager:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
-        return BASIC_TOOLS + MessageBus.messageBus_ToolSchema()
+        return BASIC_TOOLS
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
-        # 添加 消息总线工具
-        TOOL_HANDLERS["send_message"] = lambda **kw: _MessageBus.send(kw["sender"], kw["to"], kw["content"],kw.get("msg_type", "message"))
-        TOOL_HANDLERS["read_inbox"] = lambda **kw: json.dumps(_MessageBus.read_inbox(kw["sender"]), indent=4)
         return TOOL_HANDLERS
 
     def join_every_threads(self) -> None:

@@ -19,8 +19,6 @@ from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
-from TeammateManager import _MessageBus
-
 
 
 #成员初始化
@@ -38,15 +36,11 @@ TOOL_HANDLERS["todo"]               = lambda **kw: _MainAgent_TODO.update(kw["it
 #添加Teammate工具
 TOOL_HANDLERS["spawn_teammate"]     = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw["prompt"])
 TOOL_HANDLERS["list_teammates"]     = lambda **kw: _TeammateManager.list_all()
-#添加 消息总线工具
-TOOL_HANDLERS["send_message"]       = lambda **kw: _MessageBus.send(kw["sender"], kw["to"], kw["content"], kw.get("msg_type", "message"))
-TOOL_HANDLERS["read_inbox"]         = lambda **kw: json.dumps(_MessageBus.read_inbox(kw["name"]))
-TOOL_HANDLERS["broadcast"]          = lambda **kw: _MessageBus.broadcast("lead", kw["content"], _TeammateManager.member_names())
 '''
 Tool Schema
 '''
 # 基础工具 + 计划工具 + Teammate工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + MessageBus.messageBus_ToolSchema()
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA
 
 _SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS)
 

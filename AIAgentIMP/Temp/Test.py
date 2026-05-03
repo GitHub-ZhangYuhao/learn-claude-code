@@ -39,9 +39,6 @@ while True:
         msg.append(q.get())
         print(f"获取消息: {msg[-1]}")
 
-    {"role": "user", "content": "A"}
-    {"role": "user", "content": "B"}
-
     fake_agent_loop(msg)
 
 
