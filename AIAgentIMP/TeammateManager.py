@@ -1,11 +1,21 @@
 ﻿import time
+from queue import Queue
 
 from GlobalConfig import *
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
+from dataclasses import dataclass, field
 
-
+@dataclass
+class AgentProperty:
+    name: str                       = ""
+    role: str                       = ""
+    historyMessages: list           = field(default_factory=list)
+    thread: threading.Thread        = None
+    isIdleStatus: bool              = True
+    InputQueue: Queue               = field(default_factory=Queue)
+    OutputQueue: Queue              = field(default_factory=Queue)
 
 
 
@@ -55,6 +65,7 @@ class TeammateManager:
         self.config_path = self.dir / "config.json"
         self.config = self._load_config()
         self.threads = {}
+        self.agent_Properties = {}
 
     def _load_config(self):
         if self.config_path.exists():
@@ -72,11 +83,11 @@ class TeammateManager:
         self.config_path.write_text(json.dumps(self.config, ensure_ascii=False, indent=4), encoding= "utf-8")
 
 
-    def spawn(self, name: str, role: str, prompt: str) -> str:
+    def spawn(self, name: str, role: str, prompt: str = None) -> str:
         member = self._find_member(name)
         if member:
-            if member["status"] not in ["idle", "shutdown"]:
-                 return f"错误：{name} 当前为 {member['status']} 状态"
+            #if member["status"] not in ["idle", "shutdown"]:
+            #     return f"错误：{name} 当前为 {member['status']} 状态"
             member["status"] = "running"
             member["role"] = role
         else:
@@ -93,58 +104,99 @@ class TeammateManager:
             daemon=True,
             name = f"AgentThread_{name}"
         )
+        self.agent_Properties[name] = AgentProperty(name=name, role=role, thread=thread, isIdleStatus=True)
         self.threads[name] = thread
         thread.start()
         return f"生成了'{name}' (角色:{role}), 请等待 {name} 完成工作，完成后请用 'read_inbox' 读取消息。"
 
-    def _teammate_loop(self, name: str, role: str, prompt: str):
+    def is_agent_loop_run(self, name: str, prompt:str = None) -> bool:
+        isIdle = self.agent_Properties[name].isIdleStatus
+        hasInput = ( (not self.agent_Properties[name].InputQueue.empty()) or prompt)
+        return isIdle and hasInput
+
+    # 队列提取所有输入的消息，并且转化为LLM的输入的消息体
+    def parse_agent_input_queue(self, name: str) -> list:
+        message_block = []
+        while not self.agent_Properties[name].InputQueue.empty():
+            msg = self.agent_Properties[name].InputQueue.get()
+            message_block.append({"role":"user", "content": msg})
+        return message_block
+
+    def begin_agent_single_loop(self, name: str):
+        self.agent_Properties[name].isIdleStatus = False
+    def end_agent_single_loop(self, name: str, message: str = None, messages: list = None):
+        self.agent_Properties[name].isIdleStatus = True
+        if message:
+            self.agent_Properties[name].OutputQueue.put(message)
+            self.agent_Properties[name].historyMessages = messages
+
+
+    def _teammate_loop(self, name: str, role: str, prompt: str = None):
         # 线程循环，执行团队成员的任务
         # 线程名称为 AgentThread_成员名
         # 线程为守护线程，程序退出时会自动终止
-        systemPromptBuilder = SystemPromptBuilder()
-        sys_prompt = (f"你是一个团队成员，你的名字是{name}，"
-                      f"你的角色是 {role}，你的任务是根据团队的需求，完成任务。"
-                      f"在{WORKDIR}工作区工作")
-        messages = [{"role":"user", "content": prompt}]
-        messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
-        teammate_tools = self._teammate_tools()
-        teammate_tools_handler = self._teammate_tools_handler()
-        for _ in range(50):
-            try:
-                response = client.chat.completions.create(
-                    model=MODEL,
-                    messages=messages,
-                    tools=teammate_tools,
-                    max_tokens=1000,
-                )
-            except Exception:
-                break
+        while True:
+            # 等待成员状态为 idle，并且有消息队列传入
+            while not self.is_agent_loop_run(name, prompt):
+                time.sleep(2) #如果没有消息，或者成员状态不是 idle，等待2秒
 
-            msg = response.choices[0].message.content
-            if msg != "":
-                messages.append({"role": "assistant", "content": msg})
-                print(f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
+            # 历史消息
+            messages = list()
+            messages += self.agent_Properties[name].historyMessages
+            while not self.agent_Properties[name].InputQueue.empty():
+                messages += self.parse_agent_input_queue(name)
 
-            if response.choices[0].finish_reason != "tool_calls":
-                break
-            # 遍历所有的 tool_call
-            for ToolCall in response.choices[0].message.tool_calls:
-                tool_name = ToolCall.function.name
-                tool_args = json.loads(ToolCall.function.arguments)
-                handler = teammate_tools_handler.get(tool_name)
-                output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
-                print(f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
-                print(f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
-                # 检查是否是用来 计划 工具
-                # 将 toolcall 添加到 messages 历史中
-                result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
-                messages.append(result)
+            #标记Agent开始工作。
+            self.begin_agent_single_loop(name)
 
-        # 任务完成，更新成员状态为 idle
-        member = self._find_member(name)
-        if member and member["status"] != "shutdown":
-            member["status"] = "idle"
-            self._save_config()
+            systemPromptBuilder = SystemPromptBuilder()
+            sys_prompt = (f"你是一个团队成员，你的名字是{name}，"
+                          f"你的角色是 {role}，你的任务是根据团队的需求，完成任务。"
+                          f"在{WORKDIR}工作区工作")
+            if prompt:
+                messages.append({"role":"user", "content": prompt})
+            messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
+            teammate_tools = self._teammate_tools()
+            teammate_tools_handler = self._teammate_tools_handler()
+            for _ in range(50):
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL,
+                        messages=messages,
+                        tools=teammate_tools,
+                        max_tokens=1000,
+                    )
+                except Exception as e:
+                    self.end_agent_single_loop(name, str(e))
+                    break
+
+                msg = response.choices[0].message.content
+                if msg != "":
+                    messages.append({"role": "assistant", "content": msg})
+                    print(f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
+
+                if response.choices[0].finish_reason != "tool_calls":
+                    # 任务完成，更新成员状态为 idle
+                    self.end_agent_single_loop(name, msg, messages)
+                    break
+                # 遍历所有的 tool_call
+                for ToolCall in response.choices[0].message.tool_calls:
+                    tool_name = ToolCall.function.name
+                    tool_args = json.loads(ToolCall.function.arguments)
+                    handler = teammate_tools_handler.get(tool_name)
+                    output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
+                    print(f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
+                    print(f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
+                    # 检查是否是用来 计划 工具
+                    # 将 toolcall 添加到 messages 历史中
+                    result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
+                    messages.append(result)
+
+
+            member = self._find_member(name)
+            if member and member["status"] != "shutdown":
+                member["status"] = "idle"
+                self._save_config()
 
     def list_all(self) -> str:
         if not self.config["members"]:
@@ -170,10 +222,27 @@ class TeammateManager:
 
 
 
-
-
-
 if __name__ == "__main__":
+    import random
     tm = TeammateManager()
-    tm.spawn("TestAgent", "Python开发大师", "在项目的 TestTemp文件夹下创建一个文件 Test.py，内容为 打印HelloWorld")
-    tm.join_every_threads()
+    def ProducerPrompt(num:int , queue:Queue):
+        time.sleep(random.randint(10, 20))
+        msg = input(">> 消息:")
+        queue.put(msg)
+
+    AgentName = "PythonAgent"
+    # 先生成一个Agent，它持久占用一个线程。
+    tm.spawn(AgentName, "Python开发大师")
+
+    threads = []
+    for i in range(5):
+        t = threading.Thread(target=ProducerPrompt, args=(i, tm.agent_Properties[AgentName].InputQueue))
+        t.start()
+        t.join()
+        threads.append(t)
+
+    outputMsg = []
+    while True:
+        msg = tm.agent_Properties[AgentName].OutputQueue.get()
+        outputMsg.append(msg)
+        print(f"收到来自 [{AgentName}] 的消息：\n{msg}")
