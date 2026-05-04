@@ -1,5 +1,6 @@
 ﻿import time
 from queue import Queue
+from time import sleep
 
 from GlobalConfig import *
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
@@ -33,7 +34,7 @@ TEAMMATE_TOOL_SCHEMA = [
         "type": "function",
         "function": {
             "name": "spawn_teammate",
-            "description": "Spawn a persistent teammate that runs in its own thread.",
+            "description": "生成一个常驻型队友，该队友在独立线程中运行.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -41,7 +42,7 @@ TEAMMATE_TOOL_SCHEMA = [
                     "role": {"type": "string"},
                     "prompt": {"type": "string"}
                 },
-                "required": ["name", "role", "prompt"]
+                "required": ["name", "role"]
             }
         }
     },
@@ -102,18 +103,20 @@ class TeammateManager:
         # 线程为守护线程，程序退出时会自动终止
         thread = threading.Thread(
             target=self._teammate_loop,
-            args=(name, role, prompt),
+            args=(name, role),
             daemon=True,
             name = f"AgentThread_{name}"
         )
         self.agent_Properties[name] = AgentProperty(name=name, role=role, thread=thread, isIdleStatus=True)
+        if prompt:
+            self.send_message_to_agent(name, prompt)
         self.threads[name] = thread
         thread.start()
-        return f"生成了'{name}' (角色:{role}), 请等待 {name} 完成工作，完成后请用 'read_inbox' 读取消息。"
+        return f"生成了'[{name}]' (角色:{role}), 请等待 {name} 完成工作。"
 
     def is_agent_loop_run(self, name: str, prompt:str = None) -> bool:
         isIdle = self.agent_Properties[name].isIdleStatus
-        hasInput = ( (not self.agent_Properties[name].inputQueue.empty()) or prompt)
+        hasInput = (not self.agent_Properties[name].inputQueue.empty())
         return isIdle and hasInput
 
     # 队列提取所有输入的消息，并且转化为LLM的输入的消息体
@@ -137,13 +140,13 @@ class TeammateManager:
                 self.agent_Properties[name].historyMessages = messages
 
 
-    def _teammate_loop(self, name: str, role: str, prompt: str = None):
+    def _teammate_loop(self, name: str, role: str):
         # 线程循环，执行团队成员的任务
         # 线程名称为 AgentThread_成员名
         # 线程为守护线程，程序退出时会自动终止
         while True:
             # 等待成员状态为 idle，并且有消息队列传入
-            while not self.is_agent_loop_run(name, prompt):
+            while not self.is_agent_loop_run(name):
                 time.sleep(2) #如果没有消息，或者成员状态不是 idle，等待2秒
 
             # 历史消息
@@ -159,8 +162,6 @@ class TeammateManager:
             sys_prompt = (f"你是一个团队成员，你的名字是{name}，"
                           f"你的角色是 {role}，你的任务是根据团队的需求，完成任务。"
                           f"在{WORKDIR}工作区工作")
-            if prompt:
-                messages.append({"role":"user", "content": prompt})
             messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
             teammate_tools = self._teammate_tools()
             teammate_tools_handler = self._teammate_tools_handler()
@@ -205,11 +206,11 @@ class TeammateManager:
                 self._save_config()
 
     def list_all(self) -> str:
-        if not self.config["members"]:
+        if not self.agent_Properties:
             return "当前团队没有成员"
-        lines = [f"团队名称：{self.config["team_name"]}"]
-        for m in self.config["members"]:
-            lines.append(f"{m['name']} ({m['role']}) 状态： ({m['status']})")
+        lines = [f"当前Agent团队成员：\n"]
+        for agent_name, agent_prop in self.agent_Properties.items():
+            lines.append(f"- [{agent_name}] 状态:({'idle' if agent_prop.isIdleStatus else 'running'}) : {agent_prop.role}  \n")
         return "\n".join(lines)
 
     def member_names(self) -> list:
@@ -262,3 +263,5 @@ if __name__ == "__main__":
         msg = tm.agent_Properties[AgentName].outputQueue.get()
         outputMsg.append(msg)
         print(f"收到来自 [{AgentName}] 的消息：\n{msg}")
+        sleep(3)
+        print(tm.list_all())

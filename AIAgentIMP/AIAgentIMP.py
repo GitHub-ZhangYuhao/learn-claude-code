@@ -23,7 +23,6 @@ from TeammateManager import *
 
 #成员初始化
 _TeammateManager = TeammateManager()
-#_MessageBus = MessageBus() #单例在TeammateManager 中初始化
 _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 
@@ -34,7 +33,7 @@ TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
 #添加计划工具
 TOOL_HANDLERS["todo"]               = lambda **kw: _MainAgent_TODO.update(kw["items"])
 #添加Teammate工具
-TOOL_HANDLERS["spawn_teammate"]     = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw["prompt"])
+TOOL_HANDLERS["spawn_teammate"]     = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
 TOOL_HANDLERS["list_teammates"]     = lambda **kw: _TeammateManager.list_all()
 '''
 Tool Schema
