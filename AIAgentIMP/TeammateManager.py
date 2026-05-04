@@ -58,6 +58,8 @@ TEAMMATE_TOOL_SCHEMA = [
     }
 ]
 
+
+
 class TeammateManager:
     def __init__(self):
         self.dir = TEAM_DIR
@@ -215,6 +217,16 @@ class TeammateManager:
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
         return TOOL_HANDLERS
+
+    # 向团队成员发送消息
+    def send_message_to_agent(self, agent_name: str, prompt: str) -> str:
+        # 检查成员是否存在
+        if agent_name in self.agent_Properties:
+            self.agent_Properties[agent_name].InputQueue.put(prompt)
+            return f"已向 {agent_name} 发送消息：{prompt}"
+        else:
+            return f"成员 {agent_name} 不存在"
+
 
     def join_every_threads(self) -> None:
         for thread in self.threads.values():
