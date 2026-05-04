@@ -11,11 +11,11 @@ from dataclasses import dataclass, field
 class AgentProperty:
     name: str                       = ""
     role: str                       = ""
-    historyMessages: list           = field(default_factory=list)
+    historyMessages: list           = field(default_factory=list)   #只能再Agent循环过程中管理，不可再外部修改
     thread: threading.Thread        = None
-    isIdleStatus: bool              = True
-    InputQueue: Queue               = field(default_factory=Queue)
-    OutputQueue: Queue              = field(default_factory=Queue)
+    isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
+    inputQueue: Queue               = field(default_factory=Queue)  #外部传入此轮需要处理的输入。
+    outputQueue: Queue              = field(default_factory=Queue)  #只能再Agent循环过程中管理，不可再外部修改
 
 
 
@@ -113,24 +113,28 @@ class TeammateManager:
 
     def is_agent_loop_run(self, name: str, prompt:str = None) -> bool:
         isIdle = self.agent_Properties[name].isIdleStatus
-        hasInput = ( (not self.agent_Properties[name].InputQueue.empty()) or prompt)
+        hasInput = ( (not self.agent_Properties[name].inputQueue.empty()) or prompt)
         return isIdle and hasInput
 
     # 队列提取所有输入的消息，并且转化为LLM的输入的消息体
     def parse_agent_input_queue(self, name: str) -> list:
         message_block = []
-        while not self.agent_Properties[name].InputQueue.empty():
-            msg = self.agent_Properties[name].InputQueue.get()
+        while not self.agent_Properties[name].inputQueue.empty():
+            msg = self.agent_Properties[name].inputQueue.get()
             message_block.append({"role":"user", "content": msg})
         return message_block
 
     def begin_agent_single_loop(self, name: str):
+        # 确保Agent状态为idle, 然后设置为running
+        assert self.agent_Properties[name].isIdleStatus, f"Agent[{name}] 已经在运行中,不在idle状态,不能开始新的循环"
         self.agent_Properties[name].isIdleStatus = False
     def end_agent_single_loop(self, name: str, message: str = None, messages: list = None):
-        self.agent_Properties[name].isIdleStatus = True
-        if message:
-            self.agent_Properties[name].OutputQueue.put(message)
-            self.agent_Properties[name].historyMessages = messages
+        if self.agent_Properties[name].isIdleStatus == False:
+            self.agent_Properties[name].isIdleStatus = True
+            if message:
+                self.agent_Properties[name].outputQueue.put(message)
+            if messages:
+                self.agent_Properties[name].historyMessages = messages
 
 
     def _teammate_loop(self, name: str, role: str, prompt: str = None):
@@ -145,10 +149,10 @@ class TeammateManager:
             # 历史消息
             messages = list()
             messages += self.agent_Properties[name].historyMessages
-            while not self.agent_Properties[name].InputQueue.empty():
+            while not self.agent_Properties[name].inputQueue.empty():
                 messages += self.parse_agent_input_queue(name)
 
-            #标记Agent开始工作。
+            #标记该Agent开始工作。
             self.begin_agent_single_loop(name)
 
             systemPromptBuilder = SystemPromptBuilder()
@@ -169,7 +173,8 @@ class TeammateManager:
                         max_tokens=1000,
                     )
                 except Exception as e:
-                    self.end_agent_single_loop(name, str(e))
+                    # 编辑该Agent的状态为 idle，将错误信息添加到消息队列中
+                    self.end_agent_single_loop(name, str(e), messages)
                     break
 
                 msg = response.choices[0].message.content
@@ -178,8 +183,6 @@ class TeammateManager:
                     print(f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
 
                 if response.choices[0].finish_reason != "tool_calls":
-                    # 任务完成，更新成员状态为 idle
-                    self.end_agent_single_loop(name, msg, messages)
                     break
                 # 遍历所有的 tool_call
                 for ToolCall in response.choices[0].message.tool_calls:
@@ -194,7 +197,8 @@ class TeammateManager:
                     result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
                     messages.append(result)
 
-
+            # Agent 单论对话执行完毕，更新成员状态为 idle
+            self.end_agent_single_loop(name, messages[-1]["content"], messages)
             member = self._find_member(name)
             if member and member["status"] != "shutdown":
                 member["status"] = "idle"
@@ -222,7 +226,7 @@ class TeammateManager:
     def send_message_to_agent(self, agent_name: str, prompt: str) -> str:
         # 检查成员是否存在
         if agent_name in self.agent_Properties:
-            self.agent_Properties[agent_name].InputQueue.put(prompt)
+            self.agent_Properties[agent_name].inputQueue.put(prompt)
             return f"已向 {agent_name} 发送消息：{prompt}"
         else:
             return f"成员 {agent_name} 不存在"
@@ -239,7 +243,7 @@ if __name__ == "__main__":
     tm = TeammateManager()
     def ProducerPrompt(num:int , queue:Queue):
         time.sleep(random.randint(10, 20))
-        msg = input(">> 消息:")
+        msg = "你好"  #input(">> 消息:")
         queue.put(msg)
 
     AgentName = "PythonAgent"
@@ -247,14 +251,14 @@ if __name__ == "__main__":
     tm.spawn(AgentName, "Python开发大师")
 
     threads = []
-    for i in range(5):
-        t = threading.Thread(target=ProducerPrompt, args=(i, tm.agent_Properties[AgentName].InputQueue))
+    for i in range(2):
+        t = threading.Thread(target=ProducerPrompt, args=(i, tm.agent_Properties[AgentName].inputQueue))
         t.start()
         t.join()
         threads.append(t)
 
     outputMsg = []
     while True:
-        msg = tm.agent_Properties[AgentName].OutputQueue.get()
+        msg = tm.agent_Properties[AgentName].outputQueue.get()
         outputMsg.append(msg)
         print(f"收到来自 [{AgentName}] 的消息：\n{msg}")
