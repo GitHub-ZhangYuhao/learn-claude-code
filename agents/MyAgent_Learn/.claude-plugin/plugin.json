@@ -1,0 +1,11 @@
+{
+  "name": "mcp_learn",
+  "description": "MCP teaching plugin - provides simple example tools for learning MCP integration",
+  "version": "1.0.0",
+  "mcpServers": {
+    "learn": {
+      "command": "python",
+      "args": ["Examples/mcp_learn_server.py"]
+    }
+  }
+}

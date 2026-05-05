@@ -153,7 +153,7 @@ class TeammateManager:
             messages = list()
             messages += self.agent_Properties[name].historyMessages
             while not self.agent_Properties[name].inputQueue.empty():
-                messages += self.parse_agent_input_queue(name)
+                messages += self.parse_agent_input_queue(name)  #TODO:这里后面需要修改支持 SendFrom 等等
 
             #标记该Agent开始工作。
             self.begin_agent_single_loop(name)
