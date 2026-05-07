@@ -8,6 +8,22 @@ from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
 
+
+
+class AgentMessageStream:
+    def __init__(self, content: str, send_from: str, send_to: str):
+        self.content: str = content
+        self.send_from: str = send_from
+        self.send_to: str = send_to
+    def build_agent_message_stream(self) -> dict:
+        msg_content = f"<消息来自{self.send_from} 发送给{self.send_to}> 内容为: {self.content} </消息来自{self.send_from} 发送给{self.send_to}>"
+        return {"role":"user", "content":msg_content}
+
+    def get_message_sender_from(self) -> str:
+        return self.send_from
+
+
+
 @dataclass
 class AgentProperty:
     name: str                       = ""
@@ -15,8 +31,9 @@ class AgentProperty:
     historyMessages: list           = field(default_factory=list)   #只能再Agent循环过程中管理，不可再外部修改
     thread: threading.Thread        = None
     isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
-    inputQueue: Queue               = field(default_factory=Queue)  #外部传入此轮需要处理的输入。
-    outputQueue: Queue              = field(default_factory=Queue)  #只能再Agent循环过程中管理，不可再外部修改
+    current_message_sender_from     = ""
+    inputQueue: Queue               = Queue(maxsize=1)  #外部传入此轮需要处理的输入。
+    outputQueue: Queue              = Queue(maxsize=1)  #只能再Agent循环过程中管理，不可再外部修改
 
 
 
@@ -29,7 +46,48 @@ VALID_MSG_TYPES = {
     "plan_approval_response",
 }
 
+# 子 Agent 可用的工具（不含 spawn_teammate）
 TEAMMATE_TOOL_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_teammates",
+            "description": "List all teammates with name, role, status.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_message_to_agent",
+            "description": "Send a message to a teammate agent by name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "The name of the target agent to send the message to."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "The message content to send to the agent."
+                    },
+                    "send_from": {
+                        "type": "string",
+                        "description": "The name of the sender."
+                    }
+                },
+                "required": ["agent_name", "prompt", "send_from"]
+            }
+        }
+    }
+]
+
+# 仅主 Agent 可用的工具（派生子 Agent）
+SPAWN_AGENT_TOOL_SCHEMA = [
     {
         "type": "function",
         "function": {
@@ -43,17 +101,6 @@ TEAMMATE_TOOL_SCHEMA = [
                     "prompt": {"type": "string"}
                 },
                 "required": ["name", "role"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_teammates",
-            "description": "List all teammates with name, role, status.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
             }
         }
     }
@@ -123,8 +170,9 @@ class TeammateManager:
     def parse_agent_input_queue(self, name: str) -> list:
         message_block = []
         while not self.agent_Properties[name].inputQueue.empty():
-            msg = self.agent_Properties[name].inputQueue.get()
-            message_block.append({"role":"user", "content": msg})
+            msg_stream = self.agent_Properties[name].inputQueue.get()
+            message_block.append(msg_stream.build_agent_message_stream())
+            self.agent_Properties[name].current_message_sender_from = msg_stream.get_message_sender_from()
         return message_block
 
     def begin_agent_single_loop(self, name: str):
@@ -153,7 +201,7 @@ class TeammateManager:
             messages = list()
             messages += self.agent_Properties[name].historyMessages
             while not self.agent_Properties[name].inputQueue.empty():
-                messages += self.parse_agent_input_queue(name)  #TODO:这里后面需要修改支持 SendFrom 等等
+                messages += self.parse_agent_input_queue(name)
 
             #标记该Agent开始工作。
             self.begin_agent_single_loop(name)
@@ -208,27 +256,32 @@ class TeammateManager:
     def list_all(self) -> str:
         if not self.agent_Properties:
             return "当前团队没有成员"
-        lines = [f"当前Agent团队成员：\n"]
+        lines = [f"> 当前Agent团队成员：\n"]
         for agent_name, agent_prop in self.agent_Properties.items():
-            lines.append(f"- [{agent_name}] 状态:({'idle' if agent_prop.isIdleStatus else 'running'}) : {agent_prop.role}  \n")
+            lines.append(f"> [{agent_name}] 状态:({'idle' if agent_prop.isIdleStatus else 'running'}) : {agent_prop.role}  \n")
         return "\n".join(lines)
 
     def member_names(self) -> list:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
-        return BASIC_TOOLS
+        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
+        TOOL_HANDLERS["list_teammates"] = lambda **kw: self.list_all()
+        TOOL_HANDLERS["send_message_to_agent"] = lambda **kw: self.send_message_to_agent(
+            kw["agent_name"], kw["prompt"], kw["send_from"]
+        )
         return TOOL_HANDLERS
 
     # 向团队成员发送消息
-    def send_message_to_agent(self, agent_name: str, prompt: str) -> str:
+    def send_message_to_agent(self, agent_name: str, prompt: str, send_from: str) -> str:
         # 检查成员是否存在
         if agent_name in self.agent_Properties:
-            self.agent_Properties[agent_name].inputQueue.put(prompt)
-            return f"已向 {agent_name} 发送消息：{prompt}"
+            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
+            self.agent_Properties[agent_name].inputQueue.put(msg_stream)
+            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}"
         else:
             return f"成员 {agent_name} 不存在"
 
@@ -242,26 +295,31 @@ class TeammateManager:
 if __name__ == "__main__":
     import random
     tm = TeammateManager()
-    def ProducerPrompt(num:int , queue:Queue):
-        time.sleep(random.randint(10, 20))
-        msg = "你好"  #input(">> 消息:")
-        queue.put(msg)
 
-    AgentName = "PythonAgent"
+    AgentName_A = "PythonAgent"
+    AgentName_B = "JokeAgent"
     # 先生成一个Agent，它持久占用一个线程。
-    tm.spawn(AgentName, "Python开发大师")
+    tm.spawn(AgentName_A, "Python开发大师")
+    tm.spawn(AgentName_B, "开玩笑大师")
+
+    def ProducerPrompt():
+        global tm
+        global AgentName_A
+        global AgentName_B
+        result = tm.send_message_to_agent(AgentName_A, f"向{AgentName_B}问好", "user")
+        print(result)
 
     threads = []
-    for i in range(2):
-        t = threading.Thread(target=ProducerPrompt, args=(i, tm.agent_Properties[AgentName].inputQueue))
+    for i in range(1):
+        t = threading.Thread(target=ProducerPrompt, daemon=True)
         t.start()
         t.join()
         threads.append(t)
 
     outputMsg = []
     while True:
-        msg = tm.agent_Properties[AgentName].outputQueue.get()
-        outputMsg.append(msg)
-        print(f"收到来自 [{AgentName}] 的消息：\n{msg}")
+        #msg = tm.agent_Properties[AgentName_A].outputQueue.get()
+        #outputMsg.append(msg)
+        #print(f"收到来自 [{AgentName_A}] 的消息：\n{msg}")
         sleep(3)
-        print(tm.list_all())
+        #print(tm.list_all())
