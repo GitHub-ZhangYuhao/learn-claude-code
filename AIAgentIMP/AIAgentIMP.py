@@ -22,6 +22,7 @@ from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock
+from SkillManager import SkillRegistry
 
 
 #成员初始化
@@ -29,6 +30,7 @@ _TeammateManager = TeammateManager()
 _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 _MAIN_AGENT_EXIT = object()
+_MainAgent_Skills = SkillRegistry(SKILLS_DIR, ["pdf", "yh-test"])       #加载 skills
 
 '''
 Tool Handler

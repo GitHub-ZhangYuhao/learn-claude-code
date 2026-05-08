@@ -9,6 +9,7 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from queue import Queue
+from SkillManager import SkillRegistry
 
 
 load_dotenv(override=True)
@@ -21,6 +22,7 @@ TEAM_DIR = WORKDIR / ".team"
 INBOX_DIR = TEAM_DIR / "inbox"
 SKILLS_DIR = WORKDIR / "skills"
 
+_MainAgent_Skills : SkillRegistry = None
 _MainAgent_InputQueue = Queue(maxsize=1)
 _MainAgent_IdleStatus = True
 _MainAgent_Lock = threading.Lock()
