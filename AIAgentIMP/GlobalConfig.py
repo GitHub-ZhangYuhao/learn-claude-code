@@ -24,7 +24,7 @@ SKILLS_DIR = WORKDIR / "skills"
 SUB_AGENT_DIR = WORKDIR / ".agent"
 
 _MainAgent_Skills : SkillRegistry = None
-_MainAgent_InputQueue = Queue(maxsize=1)
+_MainAgent_InputQueue = Queue(maxsize=3)
 _MainAgent_IdleStatus = True
 _MainAgent_Lock = threading.Lock()
 _TeammateManager = None

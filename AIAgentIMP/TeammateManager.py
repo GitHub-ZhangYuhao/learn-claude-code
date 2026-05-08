@@ -7,10 +7,11 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
 
 global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
+global _MainAgent_Lock
 
 class AgentMessageStream:
     def __init__(self, content: str, send_from: str, send_to: str):
@@ -18,8 +19,16 @@ class AgentMessageStream:
         self.send_from: str = send_from
         self.send_to: str = send_to
     def build_agent_message_stream(self) -> dict:
-        msg_content = f"<消息来自{self.send_from} 发送给{self.send_to}> 内容为: {self.content} </消息来自{self.send_from} 发送给{self.send_to}>"
-        return {"role":"user", "content":msg_content}
+        if self.send_from == "Leader":
+            msg_content = (f"<消息来自{self.send_from} 发送给{self.send_to}> "
+                           f"内容为: {self.content} "
+                           f"</执行完成后请同步消息回{self.send_from}>")
+            return {"role": "user", "content": msg_content}
+        else:
+            msg_content = (f"<消息来自{self.send_from} 发送给{self.send_to}> "
+                           f"内容为: {self.content} "
+                           f"</如果你认为结果很比较重要，是关键步骤，可以将结果同步回{self.send_from}>")
+            return {"role":"user", "content":msg_content}
 
     def get_message_sender_from(self) -> str:
         return self.send_from
@@ -30,6 +39,8 @@ class AgentMessageStream:
 class AgentProperty:
     name: str                       = ""
     role: str                       = ""
+    skills: list                    = field(default_factory=list)
+    agent_detail: str               = ""
     historyMessages: list           = field(default_factory=list)   #只能再Agent循环过程中管理，不可再外部修改
     thread: threading.Thread        = None
     isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
@@ -100,7 +111,16 @@ SPAWN_AGENT_TOOL_SCHEMA = [
                 "properties": {
                     "name": {"type": "string"},
                     "role": {"type": "string"},
-                    "prompt": {"type": "string"}
+                    "prompt": {"type": "string"},
+                    "skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选，该Agent需要加载的Skill名称列表"
+                    },
+                    "agent_detail": {
+                        "type": "string",
+                        "description": "可选，该Agent的完整系统指令模板"
+                    }
                 },
                 "required": ["name", "role"]
             }
@@ -135,7 +155,8 @@ class TeammateManager:
         self.config_path.write_text(json.dumps(self.config, ensure_ascii=False, indent=4), encoding= "utf-8")
 
 
-    def spawn(self, name: str, role: str, prompt: str = None) -> str:
+    def spawn(self, name: str, role: str, prompt: str = None,
+              skills: list = None, agent_detail: str = None) -> str:
         member = self._find_member(name)
         if member:
             #if member["status"] not in ["idle", "shutdown"]:
@@ -156,9 +177,14 @@ class TeammateManager:
             daemon=True,
             name = f"AgentThread_{name}"
         )
-        self.agent_Properties[name] = AgentProperty(name=name, role=role, thread=thread, isIdleStatus=True)
+        self.agent_Properties[name] = AgentProperty(
+            name=name, role=role,
+            skills=skills or [],
+            agent_detail=agent_detail or "",
+            thread=thread, isIdleStatus=True
+        )
         if prompt:
-            self.send_message_to_agent(name, prompt)
+            self.send_message_to_agent(name, prompt, "Leader")  #只有Leader能够生成子Agent，所以这里 Sender_from 为 Leader 没问题
         self.threads[name] = thread
         thread.start()
         return f"生成了'[{name}]' (角色:{role}), 请等待 {name} 完成工作。"
@@ -212,6 +238,11 @@ class TeammateManager:
             sys_prompt = (f"你是一个团队成员，你的名字是{name}，"
                           f"你的角色是 {role}，你的任务是根据团队的需求，完成任务。"
                           f"在{WORKDIR}工作区工作")
+
+            # 如果有自定义detail，使用detail作为指令模板
+            if self.agent_Properties[name].agent_detail:
+                sys_prompt = self.agent_Properties[name].agent_detail
+
             messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
             teammate_tools = self._teammate_tools()
             teammate_tools_handler = self._teammate_tools_handler()
@@ -275,6 +306,12 @@ class TeammateManager:
         TOOL_HANDLERS["send_message_to_agent"] = lambda **kw: self.send_message_to_agent(
             kw["agent_name"], kw["prompt"], kw["send_from"]
         )
+        TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
+            kw["name"], kw["role"],
+            kw.get("prompt"),
+            kw.get("skills"),
+            kw.get("agent_detail"),
+        )
         return TOOL_HANDLERS
 
     # 向团队成员发送消息
@@ -283,7 +320,8 @@ class TeammateManager:
         if agent_name == "Leader":
             global _MainAgent_InputQueue
             msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
-            _MainAgent_InputQueue.put(msg_stream.build_agent_message_stream())
+            with _MainAgent_Lock:
+                _MainAgent_InputQueue.put(msg_stream.build_agent_message_stream())
             return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}"
         # 检查成员是否存在
         if agent_name in self.agent_Properties:

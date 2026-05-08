@@ -89,18 +89,22 @@ class SubAgentLoader:
 
 if __name__ == "__main__":
 
-    # from TeammateManager import *
-    #
-    # _SubAgentLoader = SubAgentLoader()
-    #
-    # tm = TeammateManager()
-    #
-    # for name, config in _SubAgentLoader._cache.items():
-    #     agent_name = config.name
-    #     agent_role = config.description
-    #     agent_skills = config.skills
-    #     agent_detail = config.detail
-    #
-    #     tm.spawn()
-    #
-    # print(_SubAgentLoader.list_names())
+    from TeammateManager import *
+
+    _SubAgentLoader = SubAgentLoader()
+
+    tm = TeammateManager()
+
+    for name, config in _SubAgentLoader.load().items():
+        tm.spawn(
+            name=config.name,
+            role=config.description,
+            skills=config.skills,
+            agent_detail=config.detail,
+        )
+
+    print(_SubAgentLoader.list_names())
+
+    while True:
+        sleep(3)
+        print(tm.list_all())
