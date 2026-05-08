@@ -19,6 +19,7 @@ client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI
 MODEL = os.environ["MODEL_ID"]
 TEAM_DIR = WORKDIR / ".team"
 INBOX_DIR = TEAM_DIR / "inbox"
+SKILLS_DIR = WORKDIR / "skills"
 
 _MainAgent_InputQueue = Queue(maxsize=1)
 _MainAgent_IdleStatus = True
