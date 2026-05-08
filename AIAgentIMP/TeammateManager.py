@@ -7,8 +7,10 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus
 
-
+global _MainAgent_InputQueue
+global _MainAgent_IdleStatus
 
 class AgentMessageStream:
     def __init__(self, content: str, send_from: str, send_to: str):
@@ -277,6 +279,12 @@ class TeammateManager:
 
     # 向团队成员发送消息
     def send_message_to_agent(self, agent_name: str, prompt: str, send_from: str) -> str:
+        # 区分如果是向主Agent发布消息
+        if agent_name == "Leader":
+            global _MainAgent_InputQueue
+            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
+            _MainAgent_InputQueue.put(msg_stream.build_agent_message_stream())
+            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}"
         # 检查成员是否存在
         if agent_name in self.agent_Properties:
             msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)

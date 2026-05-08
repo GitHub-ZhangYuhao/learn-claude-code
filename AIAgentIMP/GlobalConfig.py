@@ -4,9 +4,12 @@ import os
 import platform
 import re
 import subprocess
+import threading
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
+from queue import Queue
+
 
 load_dotenv(override=True)
 
@@ -16,3 +19,7 @@ client = OpenAI(base_url=os.getenv("OPENAI_BASE_URL"), api_key=os.getenv("OPENAI
 MODEL = os.environ["MODEL_ID"]
 TEAM_DIR = WORKDIR / ".team"
 INBOX_DIR = TEAM_DIR / "inbox"
+
+_MainAgent_InputQueue = Queue(maxsize=1)
+_MainAgent_IdleStatus = True
+_MainAgent_Lock = threading.Lock()

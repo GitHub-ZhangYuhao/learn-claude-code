@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # Harness: tool dispatch -- expanding what the model can reach.
 """
 AIAgentIMP.py - Tool dispatch + message normalization
@@ -9,7 +9,9 @@ Key insight: "The loop didn't change at all. I just added tools."
 import json
 import os
 import subprocess
+import threading
 from pathlib import Path
+from queue import Empty, Full
 
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -19,12 +21,14 @@ from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock
 
 
 #成员初始化
 _TeammateManager = TeammateManager()
 _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
+_MAIN_AGENT_EXIT = object()
 
 '''
 Tool Handler
@@ -101,15 +105,41 @@ def agent_loop(messages: list):
 
 
 
+
+global _MainAgent_InputQueue
+global _MainAgent_IdleStatus
+global _MainAgent_Lock
+
+def _enqueue_main_agent_input():
+    global _MainAgent_InputQueue
+    while True:
+        while _MainAgent_InputQueue.empty() and _MainAgent_IdleStatus:
+            sleep(2)
+            query = input("用户：>>")
+            _TeammateManager.send_message_to_agent("Leader",query,"User")
+
 if __name__ == "__main__":
     history = []
+    input_thread = threading.Thread(
+        target=_enqueue_main_agent_input,
+        daemon=True,
+        name="MainAgentInputThread",
+    )
+    input_thread.start()
+
     while True:
-        try:
-            query = input("\033[36m 用户： >> \033[0m")
-        except (EOFError, KeyboardInterrupt):
-            break
-        if query.strip().lower() in ("q", "exit", ""):
-            break
-        history.append({"role": "user", "content": query})
-        agent_loop(history)
-        print()
+        if not _MainAgent_InputQueue.empty():
+            user_query_stream = _MainAgent_InputQueue.get()
+            history.append(user_query_stream)
+
+            with _MainAgent_Lock:
+                _MainAgent_IdleStatus = False
+
+            agent_loop(history)
+
+            with _MainAgent_Lock:
+                _MainAgent_IdleStatus = True
+
+            print()
+
+        sleep(2)
