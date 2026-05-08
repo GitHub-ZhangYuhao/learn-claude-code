@@ -35,15 +35,16 @@ Tool Handler
 '''
 TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
 #添加计划工具
-TOOL_HANDLERS["todo"]               = lambda **kw: _MainAgent_TODO.update(kw["items"])
+TOOL_HANDLERS["todo"]                   = lambda **kw: _MainAgent_TODO.update(kw["items"])
 #添加Teammate工具
-TOOL_HANDLERS["spawn_teammate"]     = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
-TOOL_HANDLERS["list_teammates"]     = lambda **kw: _TeammateManager.list_all()
+TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
+TOOL_HANDLERS["list_teammates"]         = lambda **kw: _TeammateManager.list_all()
+TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: _TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
 '''
 Tool Schema
 '''
 # 基础工具 + 计划工具 + Teammate工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA
 
 _SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS)
 
