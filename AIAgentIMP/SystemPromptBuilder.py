@@ -1,4 +1,5 @@
 ﻿from GlobalConfig import *
+from SkillManager import *
 
 DYNAMIC_BOUNDARY = "=== DYNAMIC_BOUNDARY ==="
 class SystemPromptBuilder:
@@ -9,9 +10,10 @@ class SystemPromptBuilder:
     这使得提示词更易于梳理逻辑、更便于测试，并且在智能体拓展新功能时，也更易于迭代优化。
     """
 
-    def __init__(self, workdir: Path = None, tools : list = None):
+    def __init__(self, workdir: Path = None, tools : list = None, skill_registry: SkillRegistry = None):
         self.workdir = workdir or WORKDIR
         self.tools = tools or []
+        self.skill_registry = skill_registry
         self.skills_dir = self.workdir / "skills"
         self.memory_dir = self.workdir / ".memory"
 
@@ -44,29 +46,11 @@ class SystemPromptBuilder:
 
     # -- 第3节:技能元数据 --
     def _build_skill_listing(self) -> str:
-        if not self.skills_dir.exists():
-            return ""
-        skills = []
-        for skill_dir in sorted(self.skills_dir.iterdir()):
-            skill_md = skill_dir / "SKILL.md"
-            if not skill_md.exists():
-                continue
-            text = skill_md.read_text(encoding="UTF-8")
-            # 解析 frontmatter 获取名称和描述
-            match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-            if not match:
-                continue
-            meta = {}
-            for line in match.group(1).splitlines():
-                if ":" in line:
-                    k, _, v = line.partition(":")
-                    meta[k.strip()] = v.strip()
-            name = meta.get("name", skill_dir.name)
-            desc = meta.get("description", "")
-            skills.append(f" - {name}: {desc}")
-        if not skills:
-            return ""
-        return "# 可用技能\n" + "\n".join(skills)
+        if self.skill_registry :
+            skill_describe = self.skill_registry.describe_available()
+            return "# [可用Skills]:\n" + skill_describe
+        else:
+            return "无可用 Skill"
 
     def _build_memory_section(self) -> str:
         if not self.memory_dir.exists():

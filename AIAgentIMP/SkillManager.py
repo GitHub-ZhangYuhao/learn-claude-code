@@ -61,7 +61,7 @@ class SkillRegistry:
         lines = []
         for name in sorted(self.documents):
             manifest = self.documents[name].manifest
-            lines.append(f"> 技能名:[{manifest.name}]\n 路径:({manifest.path})\n 技能描述: {manifest.description}")
+            lines.append(f"- 技能名:[{manifest.name}]\n 路径:({manifest.path})\n 技能描述: {manifest.description}")
         return "\n".join(lines)
 
     def load_full_text(self, name: str) -> str:
@@ -78,4 +78,8 @@ class SkillRegistry:
 
 if __name__ == "__main__":
     _MainAgent_Skills = SkillRegistry(SKILLS_DIR, ["pdf", "yh-test"])
-    print(_MainAgent_Skills.describe_available())
+
+    from SystemPromptBuilder import SystemPromptBuilder
+    system_prompt_builder = SystemPromptBuilder(skill_registry=_MainAgent_Skills)
+
+    print(system_prompt_builder.build())
