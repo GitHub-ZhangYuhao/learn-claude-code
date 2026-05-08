@@ -110,7 +110,7 @@ global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
 global _MainAgent_Lock
 
-def _enqueue_main_agent_input():
+def enqueue_main_agent_input():
     global _MainAgent_InputQueue
     while True:
         while _MainAgent_InputQueue.empty() and _MainAgent_IdleStatus:
@@ -118,10 +118,22 @@ def _enqueue_main_agent_input():
             query = input("用户：>>")
             _TeammateManager.send_message_to_agent("Leader",query,"User")
 
+def begin_main_agent_single_loop():
+    global _MainAgent_IdleStatus
+    global _MainAgent_Lock
+    with _MainAgent_Lock:
+        _MainAgent_IdleStatus = False
+
+def end_main_agent_single_loop():
+    global _MainAgent_IdleStatus
+    global _MainAgent_Lock
+    with _MainAgent_Lock:
+        _MainAgent_IdleStatus = True
+
 if __name__ == "__main__":
     history = []
     input_thread = threading.Thread(
-        target=_enqueue_main_agent_input,
+        target=enqueue_main_agent_input,
         daemon=True,
         name="MainAgentInputThread",
     )
@@ -132,13 +144,9 @@ if __name__ == "__main__":
             user_query_stream = _MainAgent_InputQueue.get()
             history.append(user_query_stream)
 
-            with _MainAgent_Lock:
-                _MainAgent_IdleStatus = False
-
+            begin_main_agent_single_loop()
             agent_loop(history)
-
-            with _MainAgent_Lock:
-                _MainAgent_IdleStatus = True
+            end_main_agent_single_loop()
 
             print()
 
