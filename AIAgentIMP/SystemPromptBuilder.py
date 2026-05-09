@@ -1,7 +1,9 @@
-﻿from GlobalConfig import *
+﻿from typing import Optional
+
+from GlobalConfig import *
 from SkillManager import *
 
-DYNAMIC_BOUNDARY = "=== DYNAMIC_BOUNDARY ==="
+DYNAMIC_BOUNDARY = "---\nDYNAMIC_BOUNDARY\n---"
 class SystemPromptBuilder:
     """
     将系统提示词由独立的模块组合而成。
@@ -10,12 +12,20 @@ class SystemPromptBuilder:
     这使得提示词更易于梳理逻辑、更便于测试，并且在智能体拓展新功能时，也更易于迭代优化。
     """
 
-    def __init__(self, workdir: Path = None, tools : list = None, skill_registry: SkillRegistry = None):
+    def __init__(self, workdir: Path = None,
+                 tools : list = None, skill_registry: SkillRegistry = None,
+                 sub_agent_name: Optional[str] = None,
+                 sub_agent_role: Optional[str] = None,
+                 sub_agent_detail: Optional[str] = None):
+
         self.workdir = workdir or WORKDIR
         self.tools = tools or []
         self.skill_registry = skill_registry
         self.skills_dir = self.workdir / "skills"
         self.memory_dir = self.workdir / ".memory"
+        self.sub_agent_name = sub_agent_name
+        self.sub_agent_role = sub_agent_role
+        self.sub_agent_detail = sub_agent_detail
 
     # -- 第1节:核心指令 --
     def _build_core(self) -> str:
@@ -29,7 +39,7 @@ class SystemPromptBuilder:
     def _build_tool_listing(self) -> str:
         if not self.tools:
             return ""
-        lines = ["# 可用工具"]
+        lines = ["## 可用工具"]
         for tool in self.tools:
             """
             工具列表项
@@ -48,7 +58,7 @@ class SystemPromptBuilder:
     def _build_skill_listing(self) -> str:
         if self.skill_registry :
             skill_describe = self.skill_registry.describe_available()
-            return "# [可用Skills]:\n" + skill_describe
+            return "\n## 可用Skills:\n" + skill_describe
         else:
             return "无可用 Skill"
 
@@ -112,14 +122,20 @@ class SystemPromptBuilder:
             parts.append(content.strip())
         return "\n\n".join(parts)
 
+    def _build_subagent_desc(self) -> str:
+        return f"# 你的名字是: [{self.sub_agent_name}]\n" + self.sub_agent_role + self.sub_agent_detail
+
     def _build_dynamic_context(self) -> str:
         lines = [
-            f"当前日期：{datetime.date.today().isoformat()}"
-            f"工作目录：{self.workdir}"
-            f"模型：{MODEL}"
-            f"平台：{platform.system()}"
+            f"当前日期：{datetime.date.today().isoformat()}\n"
+            f"工作目录：{self.workdir}\n"
+            f"模型：{MODEL}\n"
+            f"平台：{platform.system()}\n"
         ]
-        return "# 动态上下文\n" + "\n".join(lines)
+        return "### 动态上下文\n" + "\n".join(lines)
+
+    def isSubAgnet(self) -> bool:
+        return (self.sub_agent_role is not None) and (self.sub_agent_detail is not None) and (self.sub_agent_name is not None)
 
     def build(self) -> str:
         """
@@ -131,9 +147,20 @@ class SystemPromptBuilder:
         """
         sections = []
 
-        core = self._build_core()
-        if core:
-            sections.append(core)
+        # 只有 主Agent 才加载读取 claude.md 文件
+        if not self.isSubAgnet():
+            claude_md = self._build_claude_md()
+            if claude_md:
+                sections.append(claude_md)
+            core = self._build_core()
+            if core:
+                sections.append(core)
+        # 子 Agent 构造的描述为
+        else:
+            subagent_desc = self._build_subagent_desc()
+            if subagent_desc:
+                sections.append(subagent_desc)
+
 
         tools = self._build_tool_listing()
         if tools:
@@ -146,10 +173,6 @@ class SystemPromptBuilder:
         memory = self._build_memory_section()
         if memory:
             sections.append(memory)
-
-        claude_md = self._build_claude_md()
-        if claude_md:
-            sections.append(claude_md)
 
         # 静态/动态边界
         sections.append(DYNAMIC_BOUNDARY)

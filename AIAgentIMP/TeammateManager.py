@@ -39,8 +39,8 @@ class AgentMessageStream:
 class AgentProperty:
     name: str                       = ""
     role: str                       = ""
-    skills: list                    = field(default_factory=list)
-    agent_detail: str               = ""
+    skills: list                    = field(default_factory=list)   #可加载的技能
+    agent_detail: str               = ""                            #Agent的完整系统指令模板
     historyMessages: list           = field(default_factory=list)   #只能再Agent循环过程中管理，不可再外部修改
     thread: threading.Thread        = None
     isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
@@ -221,6 +221,7 @@ class TeammateManager:
         # 线程名称为 AgentThread_成员名
         # 线程为守护线程，程序退出时会自动终止
         while True:
+
             # 等待成员状态为 idle，并且有消息队列传入
             while not self.is_agent_loop_run(name):
                 time.sleep(2) #如果没有消息，或者成员状态不是 idle，等待2秒
@@ -234,18 +235,21 @@ class TeammateManager:
             #标记该Agent开始工作。
             self.begin_agent_single_loop(name)
 
-            systemPromptBuilder = SystemPromptBuilder()
-            sys_prompt = (f"你是一个团队成员，你的名字是{name}，"
-                          f"你的角色是 {role}，你的任务是根据团队的需求，完成任务。"
-                          f"在{WORKDIR}工作区工作")
-
-            # 如果有自定义detail，使用detail作为指令模板
-            if self.agent_Properties[name].agent_detail:
-                sys_prompt = self.agent_Properties[name].agent_detail
-
-            messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
+            # 当前子Agent的 Tool 系统
             teammate_tools = self._teammate_tools()
             teammate_tools_handler = self._teammate_tools_handler()
+
+            # 当前子Agent的 Skill 系统
+            agent_SkillRegistry = SkillRegistry(SKILLS_DIR, self.agent_Properties[name].skills)
+            systemPromptBuilder = SystemPromptBuilder(workdir= WORKDIR,
+                                                      tools= teammate_tools,
+                                                      skill_registry= agent_SkillRegistry,
+                                                      sub_agent_name = self.agent_Properties[name].name,
+                                                      sub_agent_role = self.agent_Properties[name].role,
+                                                      sub_agent_detail = self.agent_Properties[name].agent_detail)
+            sys_prompt = systemPromptBuilder.build()
+            messages = systemPromptBuilder.setup_system_prompt(messages, sys_prompt)
+
             for _ in range(50):
                 try:
                     response = client.chat.completions.create(
