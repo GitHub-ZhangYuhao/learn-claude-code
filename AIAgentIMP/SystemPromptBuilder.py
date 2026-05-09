@@ -1,4 +1,4 @@
-﻿from typing import Optional
+from typing import Optional
 
 from GlobalConfig import *
 from SkillManager import *
@@ -188,10 +188,12 @@ class SystemPromptBuilder:
         if system_prompt == "":
             system_prompt = self.build()
 
-        role = messages[0].get("role","")
-        if role != "system":
+        if not messages:
             messages.insert(0, {"role":"system", "content":system_prompt})
         else:
-            content = system_prompt
-            messages[0] = ({"role":"system","content":content})
+            role = messages[0].get("role","")
+            if role != "system":
+                messages.insert(0, {"role":"system", "content":system_prompt})
+            else:
+                messages[0] = {"role":"system","content":system_prompt}
         return messages

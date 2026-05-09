@@ -45,7 +45,7 @@ class AgentProperty:
     thread: threading.Thread        = None
     isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
     current_message_sender_from     = ""
-    inputQueue: Queue               = Queue(maxsize=1)  #外部传入此轮需要处理的输入。
+    inputQueue: Queue               = field(default_factory=lambda: Queue(maxsize=1))  #外部传入此轮需要处理的输入。
     #outputQueue: Queue              = Queue(maxsize=1)  #只能再Agent循环过程中管理，不可再外部修改
 
 
@@ -294,7 +294,8 @@ class TeammateManager:
     def list_all(self) -> str:
         if not self.agent_Properties:
             return "当前团队没有成员"
-        lines = [f"> 当前Agent团队成员：\n"]
+        global _MainAgent_IdleStatus
+        lines = [f"> [Leader] 状态:({'idle' if _MainAgent_IdleStatus else 'running'}) \n"]
         for agent_name, agent_prop in self.agent_Properties.items():
             lines.append(f"> [{agent_name}] 状态:({'idle' if agent_prop.isIdleStatus else 'running'}) : {agent_prop.role}  \n")
         return "\n".join(lines)
