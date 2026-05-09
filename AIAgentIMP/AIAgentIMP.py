@@ -23,6 +23,7 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock
 from SkillManager import SkillRegistry
+from SubAgentLoader import SubAgentLoader
 
 
 #成员初始化
@@ -48,6 +49,18 @@ Tool Schema
 # 基础工具 + 计划工具 + Teammate工具
 TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA
 
+# 加载 .agent 下的所有子Agent
+_SubAgentLoader = SubAgentLoader()
+for name, config in _SubAgentLoader.load().items():
+    _TeammateManager.spawn(
+                    name=config.name,
+                    role=config.description,
+                    skills=config.skills,
+                    agent_detail=config.detail,
+    )
+print(_TeammateManager.list_all())
+
+# 加载主Agent skill
 _MainAgent_Skills = SkillRegistry(SKILLS_DIR)
 _SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS, skill_registry=_MainAgent_Skills)
 #Debug

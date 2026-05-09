@@ -46,7 +46,7 @@ class AgentProperty:
     isIdleStatus: bool              = True                          #只能再Agent循环过程中管理，不可再外部修改
     current_message_sender_from     = ""
     inputQueue: Queue               = Queue(maxsize=1)  #外部传入此轮需要处理的输入。
-    outputQueue: Queue              = Queue(maxsize=1)  #只能再Agent循环过程中管理，不可再外部修改
+    #outputQueue: Queue              = Queue(maxsize=1)  #只能再Agent循环过程中管理，不可再外部修改
 
 
 
@@ -211,7 +211,8 @@ class TeammateManager:
         if self.agent_Properties[name].isIdleStatus == False:
             self.agent_Properties[name].isIdleStatus = True
             if message:
-                self.agent_Properties[name].outputQueue.put(message)
+                pass
+                #self.agent_Properties[name].outputQueue.put(message)
             if messages:
                 self.agent_Properties[name].historyMessages = messages
 
