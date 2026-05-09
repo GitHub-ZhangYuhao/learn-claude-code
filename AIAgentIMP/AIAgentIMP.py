@@ -48,7 +48,10 @@ Tool Schema
 # 基础工具 + 计划工具 + Teammate工具
 TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA
 
-_SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS)
+_MainAgent_Skills = SkillRegistry(SKILLS_DIR)
+_SystemPromptManger = SystemPromptBuilder(workdir=WORKDIR, tools=TOOLS, skill_registry=_MainAgent_Skills)
+#Debug
+#test = _SystemPromptManger.build()
 
 def agent_loop(messages: list):
     # --[计划工具]-- 初始化,每次对话都要重新初始化

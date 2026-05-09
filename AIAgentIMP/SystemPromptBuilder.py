@@ -116,7 +116,7 @@ class SystemPromptBuilder:
 
         if not sources:
             return ""
-        parts = ["# CLAUDE.md 指令"]
+        parts = ["# 主Agent 指令, 你是 Leader "]
         for label, content in sources:
             parts.append(f"## 来自{label}")
             parts.append(content.strip())

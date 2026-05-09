@@ -326,7 +326,7 @@ class TeammateManager:
             msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
             with _MainAgent_Lock:
                 _MainAgent_InputQueue.put(msg_stream.build_agent_message_stream())
-            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}"
+            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}, 请等待{agent_name}完成任务, 任务完成后{agent_name}会同步给你"
         # 检查成员是否存在
         if agent_name in self.agent_Properties:
             msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
