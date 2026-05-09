@@ -13,6 +13,15 @@ global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
 global _MainAgent_Lock
 
+RESET = "\033[0m"
+_AGENT_COLORS = ["\033[36m", "\033[33m", "\033[35m", "\033[32m", "\033[34m"]
+
+
+def agentprint(name: str, text: str):
+    color = _AGENT_COLORS[hash(name) % len(_AGENT_COLORS)]
+    print(f"{color}{text}{RESET}")
+
+
 class AgentMessageStream:
     def __init__(self, content: str, send_from: str, send_to: str):
         self.content: str = content
@@ -267,7 +276,7 @@ class TeammateManager:
                 msg = response.choices[0].message.content
                 if msg != "":
                     messages.append({"role": "assistant", "content": msg})
-                    print(f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
+                    agentprint(name, f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
 
                 if response.choices[0].finish_reason != "tool_calls":
                     break
@@ -277,8 +286,8 @@ class TeammateManager:
                     tool_args = json.loads(ToolCall.function.arguments)
                     handler = teammate_tools_handler.get(tool_name)
                     output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
-                    print(f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
-                    print(f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
+                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
+                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
                     # 检查是否是用来 计划 工具
                     # 将 toolcall 添加到 messages 历史中
                     result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
