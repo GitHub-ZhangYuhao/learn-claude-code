@@ -8,7 +8,7 @@ from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
-from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA, _MEMORY_MANAGER
+from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 
 global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
@@ -327,7 +327,7 @@ class TeammateManager:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
-        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA
+        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
@@ -335,12 +335,14 @@ class TeammateManager:
         TOOL_HANDLERS["send_message_to_agent"] = lambda **kw: self.send_message_to_agent(
             kw["agent_name"], kw["prompt"], kw["send_from"]
         )
-        TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
-            kw["name"], kw["role"],
-            kw.get("prompt"),
-            kw.get("skills"),
-            kw.get("agent_detail"),
-        )
+        TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
+        # 子Agent不能派生新的子Agent
+        # TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
+        #     kw["name"], kw["role"],
+        #     kw.get("prompt"),
+        #     kw.get("skills"),
+        #     kw.get("agent_detail"),
+        # )
         return TOOL_HANDLERS
 
     # 向团队成员发送消息
