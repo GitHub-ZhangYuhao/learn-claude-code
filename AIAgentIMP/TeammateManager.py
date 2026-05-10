@@ -14,7 +14,20 @@ global _MainAgent_IdleStatus
 global _MainAgent_Lock
 
 RESET = "\033[0m"
-_AGENT_COLORS = ["\033[36m", "\033[33m", "\033[35m", "\033[32m", "\033[34m"]
+_AGENT_COLORS = [
+    "\033[31m",  # 红
+    "\033[32m",  # 绿
+    "\033[33m",  # 黄
+    "\033[34m",  # 蓝
+    "\033[35m",  # 品红
+    "\033[36m",  # 青
+    "\033[91m",  # 亮红
+    "\033[92m",  # 亮绿
+    "\033[93m",  # 亮黄
+    "\033[94m",  # 亮蓝
+    "\033[95m",  # 亮品红
+    "\033[96m",  # 亮青
+]
 
 
 def agentprint(name: str, text: str):
@@ -29,14 +42,14 @@ class AgentMessageStream:
         self.send_to: str = send_to
     def build_agent_message_stream(self) -> dict:
         if self.send_from == "Leader":
-            msg_content = (f"<消息来自{self.send_from} 发送给{self.send_to}> "
+            msg_content = (f"(消息来自{self.send_from} 发送给{self.send_to}) "
                            f"内容为: {self.content} "
-                           f"</执行完成后请同步消息回{self.send_from}>")
+                           f"(执行完成后请同步消息回{self.send_from})")
             return {"role": "user", "content": msg_content}
         else:
-            msg_content = (f"<消息来自{self.send_from} 发送给{self.send_to}> "
+            msg_content = (f"(消息来自{self.send_from} 发送给{self.send_to}) "
                            f"内容为: {self.content} "
-                           f"</如果你认为结果很比较重要，是关键步骤，可以将结果同步回{self.send_from}>")
+                           f"(如果你认为结果很比较重要，是关键步骤，将结果同步回{self.send_from})")
             return {"role":"user", "content":msg_content}
 
     def get_message_sender_from(self) -> str:
