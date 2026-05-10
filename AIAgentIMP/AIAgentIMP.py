@@ -24,6 +24,7 @@ from TeammateManager import *
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock
 from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
+from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 
 
 #成员初始化
@@ -43,11 +44,13 @@ TOOL_HANDLERS["todo"]                   = lambda **kw: _MainAgent_TODO.update(kw
 TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
 TOOL_HANDLERS["list_teammates"]         = lambda **kw: _TeammateManager.list_all()
 TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: _TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
+#添加MemorySave工具
+TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
 '''
 Tool Schema
 '''
 # 基础工具 + 计划工具 + Teammate工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA
 
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
@@ -159,12 +162,15 @@ if __name__ == "__main__":
     input_thread.start()
 
     while True:
+        # tick 获取 用户输入
         if not _MainAgent_InputQueue.empty():
             user_query_stream = _MainAgent_InputQueue.get()
             history.append(user_query_stream)
 
+            # 修改主Agent状态
             begin_main_agent_single_loop()
             agent_loop(history)
+            # 修改主Agent状态
             end_main_agent_single_loop()
 
             print()

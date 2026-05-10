@@ -125,9 +125,14 @@ class SystemPromptBuilder:
     def _build_subagent_desc(self) -> str:
         return f"# 你的名字是: [{self.sub_agent_name}]\n" + self.sub_agent_role + self.sub_agent_detail
 
+    def _build_agent_directory(self):
+        skills_path = self.skills_dir
+        sub_agent_dir = SUB_AGENT_DIR
+        return f"# agent目录：\n[Skills 目录]：({skills_path}) \n[SubAgent 目录]：({sub_agent_dir})"
+
     def _build_dynamic_context(self) -> str:
         lines = [
-            f"当前日期：{datetime.date.today().isoformat()}\n"
+            f"当前日期：{datetime.today().isoformat()}\n"
             f"工作目录：{self.workdir}\n"
             f"模型：{MODEL}\n"
             f"平台：{platform.system()}\n"
@@ -169,6 +174,10 @@ class SystemPromptBuilder:
         skills = self._build_skill_listing()
         if skills:
             sections.append(skills)
+
+        agent_directory = self._build_agent_directory()
+        if agent_directory:
+            sections.append(agent_directory)
 
         memory = self._build_memory_section()
         if memory:

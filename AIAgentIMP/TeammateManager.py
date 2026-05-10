@@ -8,6 +8,7 @@ from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
+from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA, _MEMORY_MANAGER
 
 global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
