@@ -5,6 +5,16 @@
             "command": "python",
             "args": "mcp_sample_server.py",
             "enabled": true
+        },
+        "sse-tools": {
+            "transport": "sse",
+            "url": "http://127.0.0.1:8001/sse",
+            "enabled": false
+        },
+        "http-tools": {
+            "transport": "streamable_http",
+            "url": "http://127.0.0.1:8002/mcp",
+            "enabled": false
         }
     }
 }
