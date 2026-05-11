@@ -9,6 +9,11 @@ import threading
 from dataclasses import dataclass, field
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
+from MCPManager import MCPManager
+
+# 全局 MCP 管理器实例（与主 Agent 共享）
+_MCPManager = MCPManager()
+_MCPManager.connect_to_servers()
 
 global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
@@ -288,7 +293,7 @@ class TeammateManager:
                     break
 
                 msg = response.choices[0].message.content
-                if msg != "":
+                if msg:
                     messages.append({"role": "assistant", "content": msg})
                     agentprint(name, f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
 
@@ -327,7 +332,7 @@ class TeammateManager:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
-        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA
+        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
@@ -336,6 +341,7 @@ class TeammateManager:
             kw["agent_name"], kw["prompt"], kw["send_from"]
         )
         TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
+        TOOL_HANDLERS.update(_MCPManager.get_tools_handlers())
         # 子Agent不能派生新的子Agent
         # TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
         #     kw["name"], kw["role"],

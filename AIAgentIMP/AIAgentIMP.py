@@ -25,6 +25,7 @@ from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent
 from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
+from MCPManager import MCPManager
 
 
 #成员初始化
@@ -33,6 +34,10 @@ _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 _MAIN_AGENT_EXIT = object()
 _MainAgent_Skills = SkillRegistry(SKILLS_DIR, ["pdf", "yh-test"])       #加载 skills
+
+# MCP 管理器初始化
+_MCPManager = MCPManager()
+_MCPManager.connect_to_servers()
 
 '''
 Tool Handler
@@ -50,7 +55,7 @@ TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
 Tool Schema
 '''
 # 基础工具 + 计划工具 + Teammate工具 + 记忆工具 + MCP工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
 
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
@@ -74,6 +79,9 @@ def agent_loop(messages: list):
     _MainAgent_TODO = TodoManager()
     # --[Error Recovery] -- 初始化
     error_recovery_manager = ErrorRecoveryManager()
+    # 最大工具调用轮次，防止 LLM 陷入工具循环
+    max_tool_rounds = 20
+    tool_round_count = 0
     while True:
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
@@ -92,7 +100,7 @@ def agent_loop(messages: list):
             recover_decision = error_recovery_manager.choose_recovery(None, str(e).lower())
 
         msg = response.choices[0].message.content
-        if msg !="":
+        if msg:
             messages.append({"role": "assistant", "content": msg})
             print(msg)
 
@@ -107,12 +115,23 @@ def agent_loop(messages: list):
         if response.choices[0].finish_reason != "tool_calls":
             return
 
+        # 防止工具循环
+        tool_round_count += 1
+        if tool_round_count >= max_tool_rounds:
+            messages.append({"role": "user", "content": "工具调用已达上限，请停止调用工具，直接用文字回复用户。"})
+            # 下一轮 LLM 应该会输出文字回复
+
         # 遍历所有的 toolcall
         for ToolCall in response.choices[0].message.tool_calls:
             tool_name = ToolCall.function.name
             tool_args = json.loads(ToolCall.function.arguments)
-            handler = TOOL_HANDLERS.get(tool_name)
-            output =  handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
+
+            # MCP 工具单独分发
+            if tool_name in _MCPManager.get_mcp_tool_names():
+                output = _MCPManager.call_tool(tool_name, tool_args)
+            else:
+                handler = TOOL_HANDLERS.get(tool_name)
+                output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
             print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
             print(output[:200])
             # 检查是否是用来 计划 工具
