@@ -1,0 +1,10 @@
+{
+    "servers": {
+        "my-tools": {
+            "transport": "stdio",
+            "command": "python",
+            "args": "mcp_sample_server.py",
+            "enabled": true
+        }
+    }
+}
