@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-main_feishu.py — 飞书前端入口
+feishu/main.py — 飞书前端入口
 
 替代 AIAgentIMP.py 的 stdin 交互，通过飞书群聊接收用户消息、展示 Agent 输出。
 零改动现有代码，通过 monkey-patch 拦截 print / agentprint 输出。
@@ -16,7 +16,7 @@ main_feishu.py — 飞书前端入口
         FEISHU_WEBHOOK_Leader=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
         FEISHU_WEBHOOK_CodeReviewer=https://open.feishu.cn/open-apis/bot/v2/hook/yyy
     6. pip install lark-oapi
-    7. python main_feishu.py
+    7. python feishu/main.py
 """
 
 import os
@@ -24,11 +24,17 @@ import re
 import sys
 import logging
 import threading
+from pathlib import Path
 from time import sleep
+
+# 将父目录加入 sys.path，使得 AIAgentIMP/TeammateManager 等模块可被导入
+_PARENT_DIR = str(Path(__file__).resolve().parent.parent)
+if _PARENT_DIR not in sys.path:
+    sys.path.insert(0, _PARENT_DIR)
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(os.path.join(_PARENT_DIR, ".env"), override=True)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -70,7 +76,7 @@ from AIAgentIMP import (
     begin_main_agent_single_loop,
     end_main_agent_single_loop,
 )
-from FeishuAdapter import FeishuAdapter
+from adapter import FeishuAdapter
 
 # ============================================================
 # 3. 初始化飞书适配器

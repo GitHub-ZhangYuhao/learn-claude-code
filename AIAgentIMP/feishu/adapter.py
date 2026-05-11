@@ -1,5 +1,5 @@
 """
-FeishuAdapter.py — 飞书群聊通信适配器
+adapter.py — 飞书群聊通信适配器
 
 封装所有飞书 SDK 交互逻辑：
 - WebSocket 长连接接收消息（无需公网 IP）
