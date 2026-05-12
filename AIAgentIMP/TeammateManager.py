@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 from MCPManager import MCPManager
+from HookManager import *
 
 # 全局 MCP 管理器实例（与主 Agent 共享）
 _MCPManager = MCPManager()
@@ -249,11 +250,18 @@ class TeammateManager:
         # 线程循环，执行团队成员的任务
         # 线程名称为 AgentThread_成员名
         # 线程为守护线程，程序退出时会自动终止
+
+        # 初始化HOOK
+        _Agent_Hooks = HookManager()
         while True:
 
             # 等待成员状态为 idle，并且有消息队列传入
             while not self.is_agent_loop_run(name):
                 time.sleep(2) #如果没有消息，或者成员状态不是 idle，等待2秒
+
+            ## [HOOK] 添加 SessionStart Hook
+            _Agent_Hooks.run_hooks( HOOK_EVENTS[0], {"tool_name":"", "tool_input":{}})
+            # [HOOK] SessionStart End
 
             # 历史消息
             messages = list()
@@ -301,13 +309,34 @@ class TeammateManager:
                     break
                 # 遍历所有的 tool_call
                 for ToolCall in response.choices[0].message.tool_calls:
+                    # 初始化 toolcall 的参数
                     tool_name = ToolCall.function.name
                     tool_args = json.loads(ToolCall.function.arguments)
-                    handler = teammate_tools_handler.get(tool_name)
-                    output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
+                    tool_id = ToolCall.id
+
+                    # [HOOK] 添加 PreToolCall Hooks
+                    hook_ctx = {"tool_name": tool_name, "tool_input": tool_args}
+                    pre_tool_hook_result = _Agent_Hooks.run_hooks(HOOK_EVENTS[1], hook_ctx)
+                    messages = append_hook_result_to_messages(pre_tool_hook_result, tool_id, messages)
+                    should_block_tool_use, messages = hook_should_block_tool_use(pre_tool_hook_result, tool_id,messages)
+                    if should_block_tool_use:
+                        continue
+                    # [HOOK] PreToolCall End
+
+                    if tool_name in _MCPManager.get_mcp_tool_names():
+                        output = _MCPManager.call_tool(tool_name, tool_args)
+                    else:
+                        handler = teammate_tools_handler.get(tool_name)
+                        output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
                     agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
                     agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
-                    # 检查是否是用来 计划 工具
+
+                    # [HOOK] 添加 PostToolCall Hooks
+                    hook_ctx["tool_output"] = output
+                    post_hook_result = _Agent_Hooks.run_hooks(HOOK_EVENTS[2], hook_ctx)
+                    messages = append_hook_result_to_messages(post_hook_result, tool_id, messages)
+                    # [HOOK] PostToolCall End
+
                     # 将 toolcall 添加到 messages 历史中
                     result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
                     messages.append(result)
@@ -332,6 +361,7 @@ class TeammateManager:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
+        #TOOD： 这里要根据当前 子Agent 过滤掉它不应该用的 MCP工具
         return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
 
     def _teammate_tools_handler(self) -> dict:
@@ -341,7 +371,6 @@ class TeammateManager:
             kw["agent_name"], kw["prompt"], kw["send_from"]
         )
         TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
-        TOOL_HANDLERS.update(_MCPManager.get_tools_handlers())
         # 子Agent不能派生新的子Agent
         # TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
         #     kw["name"], kw["role"],

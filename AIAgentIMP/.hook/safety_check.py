@@ -25,8 +25,8 @@ DANGEROUS_PATTERNS = [
     "chmod 777 /",
 ]
 
-# debug 调试
-sys.exit(1)
+# # debug 调试
+# sys.exit(1)
 
 
 for pattern in DANGEROUS_PATTERNS:
