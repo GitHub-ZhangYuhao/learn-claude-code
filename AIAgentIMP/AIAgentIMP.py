@@ -196,7 +196,7 @@ if __name__ == "__main__":
             user_query_stream = _MainAgent_InputQueue.get()
             history.append(user_query_stream)
 
-            #添加 SessionStart Hook
+            # [HOOK] 添加 SessionStart Hook
             _MainAgent_HOOKS.run_hooks( HOOK_EVENTS[0], {"tool_name":"", "tool_input":{}})
 
             # 修改主Agent状态
