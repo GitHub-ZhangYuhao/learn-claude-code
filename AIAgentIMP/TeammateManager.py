@@ -69,6 +69,7 @@ class AgentProperty:
     name: str                       = ""
     role: str                       = ""
     skills: list                    = field(default_factory=list)   #可加载的技能
+    MCPs: list                      = field(default_factory=list)   #可加载的MCP
     agent_detail: str               = ""                            #Agent的完整系统指令模板
     historyMessages: list           = field(default_factory=list)   #只能再Agent循环过程中管理，不可再外部修改
     thread: threading.Thread        = None
@@ -149,6 +150,11 @@ SPAWN_AGENT_TOOL_SCHEMA = [
                     "agent_detail": {
                         "type": "string",
                         "description": "可选，该Agent的完整系统指令模板"
+                    },
+                    "MCPs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选，该Agent可使用的MCP服务器名称列表"
                     }
                 },
                 "required": ["name", "role"]
@@ -185,7 +191,7 @@ class TeammateManager:
 
 
     def spawn(self, name: str, role: str, prompt: str = None,
-              skills: list = None, agent_detail: str = None) -> str:
+              skills: list = None, MCPs:list = None, agent_detail: str = None) -> str:
         member = self._find_member(name)
         if member:
             #if member["status"] not in ["idle", "shutdown"]:
@@ -207,10 +213,13 @@ class TeammateManager:
             name = f"AgentThread_{name}"
         )
         self.agent_Properties[name] = AgentProperty(
-            name=name, role=role,
-            skills=skills or [],
-            agent_detail=agent_detail or "",
-            thread=thread, isIdleStatus=True
+            name            = name,
+            role            = role,
+            skills          = skills or [],
+            MCPs            = MCPs or [],
+            agent_detail    =agent_detail or "",
+            thread          =thread,
+            isIdleStatus    =True
         )
         if prompt:
             self.send_message_to_agent(name, prompt, "Leader")  #只有Leader能够生成子Agent，所以这里 Sender_from 为 Leader 没问题
@@ -273,7 +282,7 @@ class TeammateManager:
             self.begin_agent_single_loop(name)
 
             # 当前子Agent的 Tool 系统
-            teammate_tools = self._teammate_tools()
+            teammate_tools = self._teammate_tools(name)
             teammate_tools_handler = self._teammate_tools_handler()
 
             # 当前子Agent的 Skill 系统
@@ -360,9 +369,18 @@ class TeammateManager:
     def member_names(self) -> list:
         return [m["name"] for m in self.config["members"]]
 
-    def _teammate_tools(self) -> list:
-        #TODO： 这里要根据当前 子Agent 过滤掉它不应该用的 MCP工具
-        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
+    def _teammate_tools(self, agent_name) -> list:
+        all_mcp_tools = _MCPManager.get_tools_schema()
+        allowed_mcps = self.agent_Properties[agent_name].MCPs  # 注意这里需要 name 参数
+
+        if allowed_mcps:
+            # MCP 工具名格式: server_name_tool_name，按服务器名前缀过滤
+            all_mcp_tools = [
+                t for t in all_mcp_tools
+                if any(t["function"]["name"].startswith(f"{mcp}_") for mcp in allowed_mcps)
+            ]
+
+        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + all_mcp_tools
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
@@ -376,6 +394,7 @@ class TeammateManager:
         #     kw["name"], kw["role"],
         #     kw.get("prompt"),
         #     kw.get("skills"),
+        #     kw.get("MCPs"),
         #     kw.get("agent_detail"),
         # )
         return TOOL_HANDLERS

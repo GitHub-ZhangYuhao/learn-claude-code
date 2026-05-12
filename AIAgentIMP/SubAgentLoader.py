@@ -14,6 +14,7 @@ class SubAgentConfig:
     name: str
     description: str
     skills: list = field(default_factory=list)
+    MCPs:list = field(default_factory=list)
     detail: str = ""  # frontmatter 之后的 body 内容
 
 
@@ -76,6 +77,14 @@ class SubAgentLoader:
             if inner:
                 skills = [s.strip().strip('"').strip("'") for s in inner.split(",")]
 
+        # MCPs 字段可能是 YAML 列表，简单解析
+        MCPs = []
+        MCPs_raw = meta.get("MCPs", "[]")
+        if MCPs_raw.startswith("[") and MCPs_raw.endswith("]"):
+            inner = MCPs_raw[1:-1].strip()
+            if inner:
+                MCPs = [s.strip().strip('"').strip("'") for s in inner.split(",")]
+
         agent_name = meta.get("name", file_path.stem)
         agent_description = meta.get("description", "")
 
@@ -83,6 +92,7 @@ class SubAgentLoader:
             name=agent_name,
             description=agent_description,
             skills=skills,
+            MCPs =MCPs,
             detail=body,
         )
 
@@ -100,6 +110,7 @@ if __name__ == "__main__":
             name=config.name,
             role=config.description,
             skills=config.skills,
+            MCPs = config.MCPs,
             agent_detail=config.detail,
         )
 

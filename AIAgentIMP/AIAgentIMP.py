@@ -65,6 +65,7 @@ for name, config in _SubAgentLoader.load().items():
     _TeammateManager.spawn(
                     name=config.name,
                     role=config.description,
+                    MCPs=config.MCPs,
                     skills=config.skills,
                     agent_detail=config.detail,
     )
