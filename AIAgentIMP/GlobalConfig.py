@@ -27,6 +27,7 @@ _MainAgent_Skills : SkillRegistry = None
 _MainAgent_InputQueue = Queue(maxsize=3)
 _MainAgent_IdleStatus = True
 _MainAgent_Lock = threading.Lock()
+_MainAgent_HOOKS = None
 
 _TeammateManager = None
 _SubAgentLoader = None

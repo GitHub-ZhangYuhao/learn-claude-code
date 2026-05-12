@@ -18,6 +18,7 @@ class TodoManager:
     def __init__(self):
         self.this_turn_used_todo: bool = False
         self.state = PlanningState()
+        self.used_todo_tool: bool =False
 
     def update(self, item: list) -> str:
         if len(item) > 12:

@@ -21,7 +21,8 @@ from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock, _MainAgent_HOOKS
+from HookManager import *
 from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
@@ -34,6 +35,7 @@ _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 _MAIN_AGENT_EXIT = object()
 _MainAgent_Skills = SkillRegistry(SKILLS_DIR, ["pdf", "yh-test"])       #加载 skills
+_MainAgent_HOOKS = HookManager()
 
 # MCP 管理器初始化
 _MCPManager = MCPManager()
@@ -81,7 +83,6 @@ def agent_loop(messages: list):
     error_recovery_manager = ErrorRecoveryManager()
     # 最大工具调用轮次，防止 LLM 陷入工具循环
     max_tool_rounds = 20
-    tool_round_count = 0
     while True:
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
@@ -115,16 +116,19 @@ def agent_loop(messages: list):
         if response.choices[0].finish_reason != "tool_calls":
             return
 
-        # 防止工具循环
-        tool_round_count += 1
-        if tool_round_count >= max_tool_rounds:
-            messages.append({"role": "user", "content": "工具调用已达上限，请停止调用工具，直接用文字回复用户。"})
-            # 下一轮 LLM 应该会输出文字回复
-
         # 遍历所有的 toolcall
         for ToolCall in response.choices[0].message.tool_calls:
             tool_name = ToolCall.function.name
             tool_args = json.loads(ToolCall.function.arguments)
+            tool_id = ToolCall.id
+
+            # [HOOK] 添加 PreToolCall Hooks
+            hook_ctx = {"tool_name" : tool_name, "tool_input":tool_args}
+            pre_tool_hook_result = _MainAgent_HOOKS.run_hooks(HOOK_EVENTS[1], hook_ctx)
+            messages = append_hook_result_to_messages(pre_tool_hook_result, tool_id, messages)
+            should_block_tool_use, messages =  hook_should_block_tool_use(pre_tool_hook_result, tool_id, messages)
+            if should_block_tool_use:
+                continue
 
             # MCP 工具单独分发
             if tool_name in _MCPManager.get_mcp_tool_names():
@@ -134,6 +138,12 @@ def agent_loop(messages: list):
                 output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
             print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
             print(output[:200])
+
+            # [HOOK] 添加 PostToolCall Hooks
+            hook_ctx["tool_output"] = output
+            post_hook_result = _MainAgent_HOOKS.run_hooks(HOOK_EVENTS[2], hook_ctx)
+            messages = append_hook_result_to_messages(post_hook_result, tool_id, messages)
+
             # 检查是否是用来 计划 工具
             _MainAgent_TODO.check_used_todo_tool(tool_name)
             # 将 toolcall 添加到 messages 历史中
@@ -185,6 +195,9 @@ if __name__ == "__main__":
         if not _MainAgent_InputQueue.empty():
             user_query_stream = _MainAgent_InputQueue.get()
             history.append(user_query_stream)
+
+            #添加 SessionStart Hook
+            _MainAgent_HOOKS.run_hooks( HOOK_EVENTS[0], {"tool_name":"", "tool_input":{}})
 
             # 修改主Agent状态
             begin_main_agent_single_loop()
