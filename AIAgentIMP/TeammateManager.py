@@ -361,7 +361,7 @@ class TeammateManager:
         return [m["name"] for m in self.config["members"]]
 
     def _teammate_tools(self) -> list:
-        #TOOD： 这里要根据当前 子Agent 过滤掉它不应该用的 MCP工具
+        #TODO： 这里要根据当前 子Agent 过滤掉它不应该用的 MCP工具
         return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
 
     def _teammate_tools_handler(self) -> dict:
