@@ -5,7 +5,7 @@ from GlobalConfig import *
 HOOK_WORKDIR = WORKDIR
 HOOK_CONFIG_PATH = WORKDIR / ".hook/.hooks.json"
 HOOK_EVENTS = ("SessionStart","PreToolUse", "PostToolUse")
-HOOK_TIMEOUT = 30 # 秒
+HOOK_TIMEOUT = 100 # 秒
 
 class HookManager:
     """
