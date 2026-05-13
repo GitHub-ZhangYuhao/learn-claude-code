@@ -21,7 +21,7 @@ from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _MainAgent_HOOKS, _OutputCallbacks
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _MainAgent_HOOKS, _AgentTeam_OutputPrint
 from HookManager import *
 from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
@@ -45,9 +45,8 @@ _MCPManager.connect_to_servers()
 def MainAgentPrint(text: str, msg_type: str = "text"):
     """主 Agent 输出函数，同时推送到外部前端（如 Slack）。"""
     print(f"\033[1m{text}\033[0m")
-    cb = _OutputCallbacks.get("Leader")
-    if cb:
-        cb("Leader", msg_type, text)
+    _AgentTeam_OutputPrint.put({"agent_name": "Leader", "msg_type": msg_type, "content": text})
+
 
 '''
 Tool Handler
@@ -189,19 +188,19 @@ def end_main_agent_single_loop():
     global _MainAgent_Lock
     with _MainAgent_Lock:
         _MainAgent_IdleStatus = True
-    _OutputCallbacks.pop("Leader", None)
 
-def AgentTeamMain():
+def AgentTeamMain(should_use_input_thread:bool = True):
     global _MainAgent_HOOKS
     global _MainAgent_InputQueue
 
     history = []
-    input_thread = threading.Thread(
-        target=enqueue_main_agent_input,
-        daemon=True,
-        name="MainAgentInputThread",
-    )
-    input_thread.start()
+    if should_use_input_thread:
+        input_thread = threading.Thread(
+            target=enqueue_main_agent_input,
+            daemon=True,
+            name="MainAgentInputThread",
+        )
+        input_thread.start()
 
     while True:
         # tick 获取 用户输入

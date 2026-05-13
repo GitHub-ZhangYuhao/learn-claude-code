@@ -7,7 +7,7 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _OutputCallbacks
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _AgentTeam_OutputPrint
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 from MCPManager import MCPManager
 from HookManager import *
@@ -40,10 +40,7 @@ _AGENT_COLORS = [
 def agentprint(name: str, text: str, msg_type: str = "text"):
     color = _AGENT_COLORS[hash(name) % len(_AGENT_COLORS)]
     print(f"{color}{text}{RESET}")
-    cb = _OutputCallbacks.get(name)
-    if cb:
-        cb(name, msg_type, text)
-
+    _AgentTeam_OutputPrint.put({"agent_name": name, "msg_type": msg_type, "content": text})
 
 class AgentMessageStream:
     def __init__(self, content: str, send_from: str, send_to: str):
@@ -256,7 +253,6 @@ class TeammateManager:
                 #self.agent_Properties[name].outputQueue.put(message)
             if messages:
                 self.agent_Properties[name].historyMessages = messages
-            _OutputCallbacks.pop(name, None)
 
 
     def _teammate_loop(self, name: str, role: str):
