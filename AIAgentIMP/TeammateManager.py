@@ -7,7 +7,7 @@ from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _OutputCallbacks
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 from MCPManager import MCPManager
 from HookManager import *
@@ -37,9 +37,12 @@ _AGENT_COLORS = [
 ]
 
 
-def agentprint(name: str, text: str):
+def agentprint(name: str, text: str, msg_type: str = "text"):
     color = _AGENT_COLORS[hash(name) % len(_AGENT_COLORS)]
     print(f"{color}{text}{RESET}")
+    cb = _OutputCallbacks.get(name)
+    if cb:
+        cb(name, msg_type, text)
 
 
 class AgentMessageStream:
@@ -253,6 +256,7 @@ class TeammateManager:
                 #self.agent_Properties[name].outputQueue.put(message)
             if messages:
                 self.agent_Properties[name].historyMessages = messages
+            _OutputCallbacks.pop(name, None)
 
 
     def _teammate_loop(self, name: str, role: str):
@@ -337,8 +341,8 @@ class TeammateManager:
                     else:
                         handler = teammate_tools_handler.get(tool_name)
                         output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
-                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}")
-                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}")
+                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :使用工具：\n{tool_name} : 参数：{tool_args}", "tool_call")
+                    agentprint(name, f"> \n [AgentTeam工具调用]:({name}) :工具调用结果：\n {output[:200]}", "tool_result")
 
                     # [HOOK] 添加 PostToolCall Hooks
                     hook_ctx["tool_output"] = output

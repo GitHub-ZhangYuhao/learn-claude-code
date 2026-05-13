@@ -21,7 +21,7 @@ from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
 from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
 from TeammateManager import *
-from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus,_MainAgent_Lock, _MainAgent_HOOKS
+from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _MainAgent_HOOKS, _OutputCallbacks
 from HookManager import *
 from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
@@ -40,6 +40,14 @@ _MainAgent_HOOKS = HookManager()
 # MCP 管理器初始化
 _MCPManager = MCPManager()
 _MCPManager.connect_to_servers()
+
+
+def MainAgentPrint(text: str, msg_type: str = "text"):
+    """主 Agent 输出函数，同时推送到外部前端（如 Slack）。"""
+    print(f"\033[1m{text}\033[0m")
+    cb = _OutputCallbacks.get("Leader")
+    if cb:
+        cb("Leader", msg_type, text)
 
 '''
 Tool Handler
@@ -104,7 +112,7 @@ def agent_loop(messages: list):
         msg = response.choices[0].message.content
         if msg:
             messages.append({"role": "assistant", "content": msg})
-            print(msg)
+            MainAgentPrint(msg)
 
         # --[Error Recovery]--错误恢复处理
         has_error, need_continue, messages = error_recovery_manager.recovery_by_decision(recover_decision, messages,attempt=1)
@@ -137,8 +145,8 @@ def agent_loop(messages: list):
             else:
                 handler = TOOL_HANDLERS.get(tool_name)
                 output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
-            print(f"> \n使用工具：{tool_name} : 参数：{tool_args}")
-            print(output[:200])
+            MainAgentPrint(f"> \n使用工具：{tool_name} : 参数：{tool_args}", "tool_call")
+            MainAgentPrint(str(output)[:500], "tool_result")
 
             # [HOOK] 添加 PostToolCall Hooks
             hook_ctx["tool_output"] = output
@@ -181,8 +189,12 @@ def end_main_agent_single_loop():
     global _MainAgent_Lock
     with _MainAgent_Lock:
         _MainAgent_IdleStatus = True
+    _OutputCallbacks.pop("Leader", None)
 
-if __name__ == "__main__":
+def AgentTeamMain():
+    global _MainAgent_HOOKS
+    global _MainAgent_InputQueue
+
     history = []
     input_thread = threading.Thread(
         target=enqueue_main_agent_input,
@@ -198,7 +210,7 @@ if __name__ == "__main__":
             history.append(user_query_stream)
 
             # [HOOK] 添加 SessionStart Hook
-            _MainAgent_HOOKS.run_hooks( HOOK_EVENTS[0], {"tool_name":"", "tool_input":{}})
+            _MainAgent_HOOKS.run_hooks(HOOK_EVENTS[0], {"tool_name": "", "tool_input": {}})
 
             # 修改主Agent状态
             begin_main_agent_single_loop()
@@ -209,3 +221,6 @@ if __name__ == "__main__":
             print()
 
         sleep(2)
+
+if __name__ == "__main__":
+    AgentTeamMain()

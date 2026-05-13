@@ -31,3 +31,6 @@ _MainAgent_HOOKS = None
 
 _TeammateManager = None
 _SubAgentLoader = None
+
+# 外部前端输出回调 {agent_name: callable(agent_name, msg_type, content)}
+_OutputCallbacks: dict = {}
