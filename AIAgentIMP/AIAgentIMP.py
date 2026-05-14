@@ -90,6 +90,7 @@ def agent_loop(messages: list):
     # --[Error Recovery] -- 初始化
     error_recovery_manager = ErrorRecoveryManager()
     # 最大工具调用轮次，防止 LLM 陷入工具循环
+    max_tool_rounds = 20
     while True:
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
