@@ -382,7 +382,7 @@ class TeammateManager:
         if agent_name in self.agent_Properties:
             msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
             self.agent_Properties[agent_name].inputQueue.put(msg_stream)
-            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}"
+            return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}, 如果你觉得消息比较重要可以通过 send_message_to_agent 工具发送给 {send_from} "
         else:
             return f"成员 {agent_name} 不存在"
 
