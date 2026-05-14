@@ -34,6 +34,7 @@ def _slack_output_monitor():
     while True:
         item = _AgentTeam_OutputPrint.get()  # 阻塞等待
         agent_name = item.get("agent_name", "Unknown")
+        msg_type = item.get("msg_type")
         content = item.get("content", "")
         if not content:
             continue
