@@ -113,6 +113,10 @@ def agent_loop(messages: list):
             messages.append({"role": "assistant", "content": msg})
             MainAgentPrint(msg)
 
+        # OpenAI 模型要求 tool 结果前必须有包含 tool_calls 的 assistant 消息
+        if any(k in MODEL.lower() for k in ("gpt", "openai", "o1", "o3", "o4")):
+            messages.append(response.choices[0].message.to_dict())
+
         # --[Error Recovery]--错误恢复处理
         has_error, need_continue, messages = error_recovery_manager.recovery_by_decision(recover_decision, messages,attempt=1)
         if has_error:

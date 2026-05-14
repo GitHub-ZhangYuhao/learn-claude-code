@@ -282,8 +282,11 @@ class TeammateManager:
 
                 msg = response.choices[0].message.content
                 if msg:
-                    messages.append({"role": "assistant", "content": msg})
                     agentprint(name, f"\n [AgentTeam消息]:({name}) :\n---\n{msg}\n---\n")
+
+                # OpenAI 模型要求 tool 结果前必须有包含 tool_calls 的 assistant 消息
+                if any(k in MODEL.lower() for k in ("gpt", "openai", "o1", "o3", "o4")):
+                    messages.append(response.choices[0].message.to_dict())
 
                 if response.choices[0].finish_reason != "tool_calls":
                     break
