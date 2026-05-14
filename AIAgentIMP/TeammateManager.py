@@ -169,40 +169,11 @@ class TeammateManager:
     def __init__(self):
         self.dir = TEAM_DIR
         self.dir.mkdir(exist_ok=True)
-        self.config_path = self.dir / "config.json"
-        self.config = self._load_config()
         self.threads = {}
         self.agent_Properties = {}
 
-    def _load_config(self):
-        if self.config_path.exists():
-            return json.loads(self.config_path.read_text(encoding= "utf-8"))
-        return {"team_name": "default" , "members": []}
-
-    def _find_member(self, name: str) -> dict:
-        for m in self.config["members"]:
-            if m["name"] == name:
-                return m
-        return None
-
-    # 保存配置, 将config写入文件config.json,
-    def _save_config(self):
-        self.config_path.write_text(json.dumps(self.config, ensure_ascii=False, indent=4), encoding= "utf-8")
-
-
     def spawn(self, name: str, role: str, prompt: str = None,
               skills: list = None, MCPs:list = None, agent_detail: str = None) -> str:
-        member = self._find_member(name)
-        if member:
-            #if member["status"] not in ["idle", "shutdown"]:
-            #     return f"错误：{name} 当前为 {member['status']} 状态"
-            member["status"] = "running"
-            member["role"] = role
-        else:
-            member = {"name": name, "role": role, "status": "working"}
-            self.config["members"].append(member)
-        # 更新配置文件，持久化保存成员信息
-        self._save_config()
         # 启动线程，执行团队成员的循环
         # 线程名称为 AgentThread_成员名
         # 线程为守护线程，程序退出时会自动终止
@@ -352,10 +323,6 @@ class TeammateManager:
 
             # Agent 单论对话执行完毕，更新成员状态为 idle
             self.end_agent_single_loop(name, messages[-1]["content"], messages)
-            member = self._find_member(name)
-            if member and member["status"] != "shutdown":
-                member["status"] = "idle"
-                self._save_config()
 
     def list_all(self) -> str:
         if not self.agent_Properties:
@@ -367,7 +334,7 @@ class TeammateManager:
         return "\n".join(lines)
 
     def member_names(self) -> list:
-        return [m["name"] for m in self.config["members"]]
+        return [name for name in self.agent_Properties.keys()]
 
     def _teammate_tools(self, agent_name) -> list:
         all_mcp_tools = _MCPManager.get_tools_schema()

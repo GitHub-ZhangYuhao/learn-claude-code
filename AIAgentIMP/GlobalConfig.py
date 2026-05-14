@@ -28,11 +28,24 @@ _MainAgent_InputQueue = Queue(maxsize=3)
 _MainAgent_IdleStatus = True
 _MainAgent_Lock = threading.Lock()
 _MainAgent_HOOKS = None
+_SESSION_CONTEXT = threading.local()
 
 _TeammateManager = None
 _SubAgentLoader = None
 
+
+def set_current_session_id(session_id):
+    _SESSION_CONTEXT.session_id = session_id
+
+
+def get_current_session_id():
+    return getattr(_SESSION_CONTEXT, "session_id", None)
+
+
+def clear_current_session_id():
+    if hasattr(_SESSION_CONTEXT, "session_id"):
+        delattr(_SESSION_CONTEXT, "session_id")
+
 # 外部前端输出回调 {agent_name: callable(agent_name, msg_type, content)}
 from queue import Queue
-
 _AgentTeam_OutputPrint: Queue = Queue()
