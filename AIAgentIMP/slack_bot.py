@@ -15,6 +15,10 @@ import re
 import json
 import asyncio
 import threading
+import urllib.request
+import base64
+import io
+import requests
 from time import time, strftime
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -259,8 +263,12 @@ def _send_to_local_agent(user_id: str, message: dict) -> bool:
     with _ws_clients_lock:
         client_info = _ws_clients.get(user_id)
     if not client_info or not _ws_loop:
+        print(f"[relay] 发送失败: user={user_id} 未连接或无事件循环")
         return False
     ws = client_info["ws"]
+    # 调试日志
+    images_in_msg = message.get("images", [])
+    print(f"[relay] 发送给用户 {user_id}: type={message.get('type')}, images={len(images_in_msg)}, text_len={len(message.get('text',''))}")
     try:
         asyncio.run_coroutine_threadsafe(ws.send(json.dumps(message)), _ws_loop)
         return True
@@ -335,6 +343,122 @@ def _strip_mention(text: str) -> str:
     return re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
 
 
+def _extract_images_from_slack_event(event: dict, client) -> list:
+    """从 Slack 事件中提取图片，返回 OpenAI vision 格式的 image_url 列表。
+
+    支持两种来源：
+    1. event["files"] 中的图片附件
+    2. event["message"]["files"] 中的嵌套图片（thread 消息场景）
+
+    返回: [{"type": "image_url", "image_url": {"url": "..."}}]
+    """
+    try:
+        from PIL import Image
+        _HAS_PIL = True
+    except ImportError:
+        _HAS_PIL = False
+
+    images = []
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+
+    # 调试：打印事件的关键字段
+    print(f"[relay][DEBUG] event keys: {list(event.keys())}")
+    print(f"[relay][DEBUG] event subtype: {event.get('subtype', '<none>')}")
+    if "files" in event:
+        print(f"[relay][DEBUG] event[files] count: {len(event['files'])}")
+        for i, f in enumerate(event["files"]):
+            print(f"[relay][DEBUG]   file[{i}]: filetype={f.get('filetype')}, url_private={'yes' if f.get('url_private') else 'no'}, url_download={'yes' if f.get('url_private_download') else 'no'}")
+    if "message" in event and isinstance(event["message"], dict):
+        msg = event["message"]
+        if "files" in msg:
+            print(f"[relay][DEBUG] event[message][files] count: {len(msg['files'])}")
+
+    # 从 files 字段提取（顶层）
+    files = event.get("files", [])
+    # 从 event["message"]["files"] 提取（thread 消息场景）
+    if "message" in event and isinstance(event["message"], dict):
+        files += event["message"].get("files", [])
+
+    # 常见图片 filetype（Slack 返回的是 png/jpeg/gif 等，不带 image/ 前缀）
+    _IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg"}
+
+    for f in files:
+        filetype = f.get("filetype", "")
+        if filetype and filetype.lower() not in _IMAGE_TYPES:
+            print(f"[relay] 跳过非图片文件: {f.get('name', 'unknown')} (type={filetype})")
+            continue
+        # Slack 文件的 URL 可能需要 bot token 访问
+        url = f.get("url_private") or f.get("url_private_download")
+        if not url:
+            print(f"[relay] 图片无可用 URL: {f.get('name', 'unknown')}")
+            continue
+        try:
+            # Slack 下载需要同时传 Authorization 和 Cookie
+            # 用 requests 库更可靠（支持 follow redirect）
+            import requests as _requests
+
+            def _try_download(dl_url: str) -> tuple:
+                """尝试下载，返回 (bytes, content_type) 或 (None, None)。"""
+                headers = {
+                    "Authorization": f"Bearer {bot_token}",
+                }
+                try:
+                    resp = _requests.get(dl_url, headers=headers, timeout=15, allow_redirects=True)
+                    return resp.content, resp.headers.get("Content-Type", "")
+                except Exception as e:
+                    print(f"[relay] requests 下载失败 {dl_url}: {e}")
+                    return None, None
+
+            raw, content_type = _try_download(url)
+            if raw is None or content_type.startswith("text/html"):
+                alt_url = f.get("url_private_download")
+                if alt_url and alt_url != url:
+                    raw, content_type = _try_download(alt_url)
+
+            if raw is None or content_type.startswith("text/html"):
+                print(f"[relay] 无法获取图片文件，Slack 返回 HTML")
+                continue
+
+            print(f"[relay] 下载成功: {f.get('name', 'unknown')} Content-Type={content_type} ({len(raw)} bytes)")
+
+            # 用 PIL 压缩/转换为 JPEG，确保兼容性
+            if _HAS_PIL:
+                try:
+                    img = Image.open(io.BytesIO(raw))
+                    img.thumbnail((1024, 1024))
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=85)
+                    jpeg_bytes = buf.getvalue()
+                    b64 = base64.b64encode(jpeg_bytes).decode("utf-8")
+                    mime = "image/jpeg"
+                    print(f"[relay] PIL 压缩为 JPEG ({len(jpeg_bytes)} bytes)")
+                except Exception as e:
+                    print(f"[relay] PIL 处理失败: {e}，降级为直接 base64 发送原始 PNG")
+                    # 降级：直接 base64 发送原始数据
+                    b64 = base64.b64encode(raw).decode("utf-8")
+                    mime = "image/png"
+            else:
+                # 无 PIL，直接用 base64 原始数据
+                b64 = base64.b64encode(raw).decode("utf-8")
+                mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                            "gif": "image/gif", "webp": "image/webp"}
+                mime = mime_map.get(filetype.lower(), "image/png")
+
+            images.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+            print(f"[relay] 已提取图片: {f.get('name', 'unknown')}")
+        except Exception as e:
+            print(f"[relay] 下载/处理图片失败 {url}: {e}")
+
+    if not images:
+        print(f"[relay] 未找到任何图片（files总数={len(files)}）")
+    return images
+
+
 # ── Slack 事件处理 ────────────────────────────────────────
 
 @app.event("app_mention")
@@ -363,26 +487,35 @@ def handle_mention(event, say, client):
         return
 
     if not message:
-        buttons = _build_agent_buttons(channel, thread_ts, user)
-        say(
-            text="选择一个 Agent 开始对话",
-            blocks=[
-                {
-                    "type": "header",
-                    "text": {"type": "plain_text", "text": "🤖 Agent Team", "emoji": True},
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "点击按钮选择一个 Agent 开始对话，或直接 `@Bot 消息` 发送给当前目标 Agent：",
+        # 即使没有文本，也可能有图片附件
+        images = _extract_images_from_slack_event(event, client)
+        if not images:
+            buttons = _build_agent_buttons(channel, thread_ts, user)
+            say(
+                text="选择一个 Agent 开始对话",
+                blocks=[
+                    {
+                        "type": "header",
+                        "text": {"type": "plain_text", "text": "🤖 Agent Team", "emoji": True},
                     },
-                },
-                {"type": "actions", "elements": buttons},
-            ],
-            thread_ts=thread_ts,
-        )
-        return
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "点击按钮选择一个 Agent 开始对话，或直接 `@Bot 消息` 发送给当前目标 Agent：",
+                        },
+                    },
+                    {"type": "actions", "elements": buttons},
+                ],
+                thread_ts=thread_ts,
+            )
+            return
+        # 有图片但无文本：构造描述文本
+        image_count = len(images)
+        message = f"用户上传了 {image_count} 张图片，请分析图片内容并回复。"
+
+    # 提取图片（有文本时也要尝试提取图片）
+    images = _extract_images_from_slack_event(event, client)
 
     # 普通消息：通过 WebSocket 转发给本地 Agent
     info = _get_or_create_thread(thread_ts, channel, client, user_id=user)
@@ -394,6 +527,7 @@ def handle_mention(event, say, client):
         "user_id": user,
         "text": message,
         "target_agent": target,
+        "images": images,
     })
 
 
@@ -415,7 +549,13 @@ def handle_message(event, client):
 
     message = _strip_mention(raw_text)
     if not message:
-        return
+        # 尝试从事件中提取图片
+        images = _extract_images_from_slack_event(event, client)
+        if not images:
+            return
+        message = "用户上传了图片，请分析图片内容并回复。"
+    else:
+        images = _extract_images_from_slack_event(event, client)
 
     print(f"[relay] thread消息 用户={user} 消息={message!r}")
 
@@ -428,6 +568,7 @@ def handle_message(event, client):
         "user_id": user,
         "text": message,
         "target_agent": target,
+        "images": images,
     })
 
 

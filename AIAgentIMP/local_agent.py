@@ -68,14 +68,15 @@ def _route_message_to_agent(data: dict):
     target_agent = data.get("target_agent", "Leader")
     user_id = data.get("user_id", "User")
     thread_ts = data.get("thread_ts", "")
+    images = data.get("images", [])
 
-    print(f"[local] 收到消息: target={target_agent} text={text[:80]!r}")
+    print(f"[local] 收到消息: target={target_agent} text={text[:80]!r} images={len(images)}张")
 
     # 保存 thread_ts 到全局，供输出回传时使用
     global _current_thread_ts
     _current_thread_ts = thread_ts
 
-    _TeammateManager.send_message_to_agent(target_agent, text, f"SlackUser:{user_id}")
+    _TeammateManager.send_message_to_agent(target_agent, text, f"SlackUser:{user_id}", images=images)
 
 
 # 当前活跃的 thread_ts（用于输出回传）

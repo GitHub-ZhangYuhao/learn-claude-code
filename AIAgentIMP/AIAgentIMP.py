@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import threading
+import base64
 from pathlib import Path
 from queue import Empty, Full
 
@@ -173,13 +174,44 @@ global _MainAgent_InputQueue
 global _MainAgent_IdleStatus
 global _MainAgent_Lock
 
+
+def _load_local_image(file_path: str) -> dict:
+    """从本地文件路径加载图片，返回 OpenAI vision 格式的 image_url dict。"""
+    file_path = os.path.expanduser(file_path)
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"图片文件不存在: {file_path}")
+    ext = Path(file_path).suffix.lower()
+    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp"}
+    mime = mime_map.get(ext, "image/png")
+    with open(file_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+
+
 def enqueue_main_agent_input():
     global _MainAgent_InputQueue
     while True:
         while _MainAgent_InputQueue.empty() and _MainAgent_IdleStatus:
             sleep(2)
             query = input("用户：>>")
-            _TeammateManager.send_message_to_agent("Leader",query,"User")
+
+            # 支持 !img /path/to/image.png 语法
+            images = []
+            text = query
+            if query.startswith("!img "):
+                parts = query.split(None, 2)
+                if len(parts) >= 2:
+                    img_path = parts[1]
+                    text = parts[2] if len(parts) > 2 else "请分析这张图片。"
+                    try:
+                        images.append(_load_local_image(img_path))
+                        print(f"[加载图片] {img_path}")
+                    except FileNotFoundError as e:
+                        print(f"[错误] {e}")
+                        continue
+
+            _TeammateManager.send_message_to_agent("Leader", text, "User", images=images)
 
 def begin_main_agent_single_loop():
     global _MainAgent_IdleStatus

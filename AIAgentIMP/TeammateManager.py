@@ -43,21 +43,27 @@ def agentprint(name: str, text: str, msg_type: str = "text"):
     _AgentTeam_OutputPrint.put({"agent_name": name, "msg_type": msg_type, "content": text})
 
 class AgentMessageStream:
-    def __init__(self, content: str, send_from: str, send_to: str):
+    def __init__(self, content: str, send_from: str, send_to: str, images: list = None):
         self.content: str = content
         self.send_from: str = send_from
         self.send_to: str = send_to
+        self.images: list = images or []  # list of {"type": "image_url", "image_url": {"url": "..."}}
+
     def build_agent_message_stream(self) -> dict:
-        if self.send_from == "Leader":
-            msg_content = (f"(消息来自{self.send_from} 发送给{self.send_to}) "
-                           f"内容为: {self.content} "
-                           f"(执行完成后请同步消息回{self.send_from})")
-            return {"role": "user", "content": msg_content}
+        prefix = f"(消息来自{self.send_from} 发送给{self.send_to})"
+        suffix = (f"(执行完成后请同步消息回{self.send_from})"
+                  if self.send_from == "Leader"
+                  else f"(如果你认为结果很比较重要，是关键步骤，将结果同步回{self.send_from})")
+
+        text_content = f"{prefix} 内容为: {self.content} {suffix}"
+
+        if self.images:
+            # multimodal content: OpenAI vision 格式
+            content = [{"type": "text", "text": text_content}] + self.images
         else:
-            msg_content = (f"(消息来自{self.send_from} 发送给{self.send_to}) "
-                           f"内容为: {self.content} "
-                           f"(如果你认为结果很比较重要，是关键步骤，将结果同步回{self.send_from})")
-            return {"role":"user", "content":msg_content}
+            content = text_content
+
+        return {"role": "user", "content": content}
 
     def get_message_sender_from(self) -> str:
         return self.send_from
@@ -322,6 +328,7 @@ class TeammateManager:
 
                     # 将 toolcall 添加到 messages 历史中
                     result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
+                    result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
                     messages.append(result)
 
             # Agent 单论对话执行完毕，更新成员状态为 idle
@@ -370,17 +377,17 @@ class TeammateManager:
         return TOOL_HANDLERS
 
     # 向团队成员发送消息
-    def send_message_to_agent(self, agent_name: str, prompt: str, send_from: str) -> str:
+    def send_message_to_agent(self, agent_name: str, prompt: str, send_from: str, images: list = None) -> str:
         # 区分如果是向主Agent发布消息
         if agent_name == "Leader":
             global _MainAgent_InputQueue
-            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
+            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name, images=images)
             with _MainAgent_Lock:
                 _MainAgent_InputQueue.put(msg_stream.build_agent_message_stream())
             return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}, 请等待{agent_name}完成任务, 任务完成后{agent_name}会同步给你"
         # 检查成员是否存在
         if agent_name in self.agent_Properties:
-            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name)
+            msg_stream = AgentMessageStream(content=prompt, send_from=send_from, send_to=agent_name, images=images)
             self.agent_Properties[agent_name].inputQueue.put(msg_stream)
             return f"已向 {agent_name} 发送消息：{prompt}, 发送者为: {send_from}, 如果你觉得消息比较重要可以通过 send_message_to_agent 工具发送给 {send_from} "
         else:
