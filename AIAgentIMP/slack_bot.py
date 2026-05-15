@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
 """
-slack_bot.py - Slack Bot 接入 Agent Team
+slack_bot.py - Slack Bot WebSocket Relay Server
 
-Slack ↔ AgentTeam 沟通逻辑：
-1. @Bot 消息 → 放入 _MainAgent_InputQueue → 触发 agent_loop
-2. 监控 _AgentTeam_OutputPrint → 新内容推送到 Slack Thread
+架构：
+  Slack ↔ 本服务器 (WebSocket Server) ↔ 各用户本地 AgentTeam (WebSocket Client)
+
+流程：
+1. 用户 @Bot 消息 → 本服务器收到 → 通过 WebSocket 转发给对应用户的本地 Agent
+2. 本地 Agent 处理完毕 → 通过 WebSocket 回传输出 → 本服务器推送到 Slack
 """
 
 import os
+import re
+import json
+import asyncio
 import threading
 from time import time, strftime
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+import websockets
+from websockets.asyncio.server import serve as ws_serve
 
-# 加载 .env
 load_dotenv()
 
-# 导入 AIAgentIMP 全部基础设施
-import re
-from AIAgentIMP import AgentTeamMain, _MainAgent_InputQueue, _AgentTeam_OutputPrint
-from TeammateManager import TeammateManager
-
 app = App(token=os.getenv("SLACK_BOT_TOKEN"))
+
+# WebSocket 服务器配置
+WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
+WS_PORT = int(os.getenv("WS_PORT", "8765"))
 
 # ── Slack Block Kit 卡片构建 ──────────────────────────────────────────
 
@@ -215,90 +221,109 @@ class _SlackCardBuilder:
 _slack_card_builder = _SlackCardBuilder(flush_delay=1.0)
 
 
-# ── Slack Thread 管理 ─────────────────────────────────────────────────
-# thread_ts -> {channel, client, "_last_flush", "target_agent"}
+# ── WebSocket 连接管理 ─────────────────────────────────────
+# user_id -> {"ws": websocket, "agents": ["Leader", "Coder", ...]}
+_ws_clients: dict = {}
+_ws_clients_lock = threading.Lock()
+_ws_loop: asyncio.AbstractEventLoop = None  # WebSocket 事件循环引用
+
+
+# ── Slack Thread 管理 ─────────────────────────────────────────
+# thread_ts -> {channel, client, "_last_flush", "target_agent", "user_id"}
 _active_threads: dict = {}
-_THREAD_FLUSH_INTERVAL = 2.0  # 定期 flush 的间隔
+_THREAD_FLUSH_INTERVAL = 2.0
 
 
-def _get_or_create_thread(thread_ts: str, channel: str, client, target_agent: str = "Leader") -> dict:
+def _get_or_create_thread(thread_ts: str, channel: str, client, user_id: str = "", target_agent: str = "Leader") -> dict:
     """获取或创建 thread 信息，保留已有 target_agent。"""
     if thread_ts in _active_threads:
         info = _active_threads[thread_ts]
         info["channel"] = channel
         info["client"] = client
+        if user_id:
+            info["user_id"] = user_id
         return info
     info = {
         "channel": channel,
         "client": client,
         "_last_flush": time(),
         "target_agent": target_agent,
+        "user_id": user_id,
     }
     _active_threads[thread_ts] = info
     return info
 
 
-def _slack_output_monitor():
-    """后台线程：消费 _AgentTeam_OutputPrint Queue，推送到 Slack。"""
-    while True:
-        item = _AgentTeam_OutputPrint.get()  # 阻塞等待
-        agent_name = item.get("agent_name", "Unknown")
-        msg_type = item.get("msg_type", "text")
-        content = item.get("content", "")
-        if not content:
-            continue
+def _send_to_local_agent(user_id: str, message: dict) -> bool:
+    """通过 WebSocket 发送消息给用户的本地 Agent。返回是否成功。"""
+    with _ws_clients_lock:
+        client_info = _ws_clients.get(user_id)
+    if not client_info or not _ws_loop:
+        return False
+    ws = client_info["ws"]
+    try:
+        asyncio.run_coroutine_threadsafe(ws.send(json.dumps(message)), _ws_loop)
+        return True
+    except Exception as e:
+        print(f"[relay] WebSocket 发送失败 user={user_id}: {e}")
+        return False
 
-        # 推送到所有活跃的 Thread（通过卡片构建器聚合）
-        for thread_ts, info in list(_active_threads.items()):
-            blocks = _slack_card_builder.add_message(thread_ts, agent_name, msg_type, content)
+
+def _post_agent_output_to_slack(data: dict):
+    """将本地 Agent 回传的输出推送到 Slack thread。"""
+    thread_ts = data.get("thread_ts")
+    agent_name = data.get("agent_name", "Unknown")
+    msg_type = data.get("msg_type", "text")
+    content = data.get("content", "")
+    if not thread_ts or not content:
+        return
+
+    info = _active_threads.get(thread_ts)
+    if not info:
+        return
+
+    blocks = _slack_card_builder.add_message(thread_ts, agent_name, msg_type, content)
+    if blocks:
+        try:
+            info["client"].chat_postMessage(
+                channel=info["channel"],
+                thread_ts=thread_ts,
+                text=f"[{agent_name}] {content[:80]}",
+                blocks=blocks,
+            )
+            info["_last_flush"] = time()
+        except Exception as e:
+            print(f"[relay] Slack 推送失败: {e}")
+    else:
+        now = time()
+        if now - info.get("_last_flush", 0) > _THREAD_FLUSH_INTERVAL:
+            blocks = _slack_card_builder.force_flush(thread_ts)
             if blocks:
                 try:
                     info["client"].chat_postMessage(
                         channel=info["channel"],
                         thread_ts=thread_ts,
-                        text=f"[{agent_name}] {content[:80]}",
+                        text=f"[{agent_name}] 新消息",
                         blocks=blocks,
                     )
-                    info["_last_flush"] = time()
+                    info["_last_flush"] = now
                 except Exception as e:
-                    print(f"[slack_bot] 推送失败: {e}")
-            else:
-                # 没触发 flush，检查是否需要强制 flush（超时兜底）
-                now = time()
-                if now - info.get("_last_flush", 0) > _THREAD_FLUSH_INTERVAL:
-                    blocks = _slack_card_builder.force_flush(thread_ts)
-                    if blocks:
-                        try:
-                            info["client"].chat_postMessage(
-                                channel=info["channel"],
-                                thread_ts=thread_ts,
-                                text=f"[{agent_name}] 新消息",
-                                blocks=blocks,
-                            )
-                            info["_last_flush"] = now
-                        except Exception as e:
-                            print(f"[slack_bot] 推送失败: {e}")
+                    print(f"[relay] Slack 推送失败: {e}")
 
 
-def _get_teammate_manager():
-    """获取 AIAgentIMP 模块中的 TeammateManager 实例。"""
-    import AIAgentIMP
-    return AIAgentIMP._TeammateManager
-
-
-def _build_agent_buttons(channel: str, thread_ts: str) -> list:
-    """动态构建 Agent 按钮列表。"""
-    tm = _get_teammate_manager()
-    all_names = ["Leader"] + tm.member_names()
+def _build_agent_buttons(channel: str, thread_ts: str, user_id: str) -> list:
+    """根据用户本地 Agent 列表构建按钮。"""
+    with _ws_clients_lock:
+        client_info = _ws_clients.get(user_id)
+    if not client_info:
+        return []
+    agent_names = client_info.get("agents", ["Leader"])
     buttons = []
-    for name in all_names:
-        prop = tm.agent_Properties.get(name)
-        is_idle = not prop or prop.isIdleStatus
-        status_icon = "🟢" if is_idle else "🔴"
+    for name in agent_names:
         role_emoji, _ = _AGENT_ROLE_DECORATIONS.get(name, _AGENT_ROLE_DECORATIONS["default"])
         buttons.append({
             "type": "button",
-            "text": {"type": "plain_text", "text": f"{status_icon}{role_emoji} {name}", "emoji": True},
+            "text": {"type": "plain_text", "text": f"{role_emoji} {name}", "emoji": True},
             "action_id": f"select_agent_{name}",
             "value": f"{channel}|{thread_ts}",
         })
@@ -310,13 +335,13 @@ def _strip_mention(text: str) -> str:
     return re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
 
 
-# ── Slack 事件处理 ────────────────────────────────────────────────────
+# ── Slack 事件处理 ────────────────────────────────────────
 
 @app.event("app_mention")
 def handle_mention(event, say, client):
     """
     @Bot（无文本）  → 回复 Agent 按钮菜单
-    @Bot 消息内容 → 发给当前 thread 目标 Agent（默认 Leader）
+    @Bot 消息内容 → 通过 WebSocket 转发给用户本地 Agent
     """
     channel = event.get("channel")
     user = event.get("user")
@@ -324,10 +349,21 @@ def handle_mention(event, say, client):
     thread_ts = event.get("ts")
     message = _strip_mention(raw_text)
 
-    print(f"[slack_bot] @mention 用户={user} 消息={message!r}")
+    print(f"[relay] @mention 用户={user} 消息={message!r}")
+
+    # 检查用户是否有本地 Agent 在线
+    with _ws_clients_lock:
+        is_online = user in _ws_clients
+
+    if not is_online:
+        say(
+            text=f"❌ <@{user}> 你的本地 Agent 未连接。请先在本地运行 `python local_agent.py`",
+            thread_ts=thread_ts,
+        )
+        return
 
     if not message:
-        buttons = _build_agent_buttons(channel, thread_ts)
+        buttons = _build_agent_buttons(channel, thread_ts, user)
         say(
             text="选择一个 Agent 开始对话",
             blocks=[
@@ -348,17 +384,23 @@ def handle_mention(event, say, client):
         )
         return
 
-    # 普通消息：发送给当前 thread 目标 Agent
-    info = _get_or_create_thread(thread_ts, channel, client)
+    # 普通消息：通过 WebSocket 转发给本地 Agent
+    info = _get_or_create_thread(thread_ts, channel, client, user_id=user)
     target = info["target_agent"]
-    tm = _get_teammate_manager()
-    tm.send_message_to_agent(target, message, f"SlackUser:{user}")
+    _send_to_local_agent(user, {
+        "type": "user_message",
+        "thread_ts": thread_ts,
+        "channel": channel,
+        "user_id": user,
+        "text": message,
+        "target_agent": target,
+    })
 
 
 @app.event("message")
 def handle_message(event, client):
     """
-    处理 thread 中用户的后续消息（不带 @mention）→ 路由到 thread 的 target_agent
+    处理 thread 中用户的后续消息（不带 @mention）→ 通过 WebSocket 转发
     """
     channel = event.get("channel")
     user = event.get("user")
@@ -375,23 +417,34 @@ def handle_message(event, client):
     if not message:
         return
 
-    print(f"[slack_bot] thread消息 用户={user} 消息={message!r}")
+    print(f"[relay] thread消息 用户={user} 消息={message!r}")
 
-    info = _get_or_create_thread(thread_ts, channel, client)
+    info = _get_or_create_thread(thread_ts, channel, client, user_id=user)
     target = info["target_agent"]
-    tm = _get_teammate_manager()
-    tm.send_message_to_agent(target, message, f"SlackUser:{user}")
+    _send_to_local_agent(user, {
+        "type": "user_message",
+        "thread_ts": thread_ts,
+        "channel": channel,
+        "user_id": user,
+        "text": message,
+        "target_agent": target,
+    })
 
 
 # ── 按钮点击 → 切换目标 Agent ───────────────────────────────
+
+# 动态注册的 action 名称集合，避免重复注册
+_registered_actions: set = set()
+
 
 def _make_button_handler(agent_name: str):
     def handler(ack, body, client):
         ack()
         value = body["actions"][0]["value"]
         channel, thread_ts = value.split("|", 1)
+        user_id = body.get("user", {}).get("id", "")
 
-        info = _get_or_create_thread(thread_ts, channel, client, target_agent=agent_name)
+        info = _get_or_create_thread(thread_ts, channel, client, user_id=user_id, target_agent=agent_name)
         info["target_agent"] = agent_name
 
         role_emoji, _ = _AGENT_ROLE_DECORATIONS.get(agent_name, _AGENT_ROLE_DECORATIONS["default"])
@@ -406,32 +459,80 @@ def _make_button_handler(agent_name: str):
     return handler
 
 
-def _register_agent_actions():
-    """为所有已加载的 Agent 注册按钮 action handler。"""
-    tm = _get_teammate_manager()
-    all_names = ["Leader"] + tm.member_names()
-    for name in all_names:
-        app.action(f"select_agent_{name}")(_make_button_handler(name))
+def _ensure_action_registered(agent_name: str):
+    """确保指定 Agent 的按钮 action 已注册。"""
+    action_id = f"select_agent_{agent_name}"
+    if action_id not in _registered_actions:
+        app.action(action_id)(_make_button_handler(agent_name))
+        _registered_actions.add(action_id)
 
 
-# ── 启动 ──────────────────────────────────────────────────────────────
+# ── WebSocket 服务器 ────────────────────────────────────────
+
+async def _ws_handler(websocket):
+    """处理单个 WebSocket 客户端连接。"""
+    user_id = None
+    try:
+        async for raw in websocket:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = data.get("type")
+
+            # ── 注册：本地 Agent 上线 ──
+            if msg_type == "register":
+                user_id = data.get("user_id", "")
+                agents = data.get("agents", ["Leader"])
+                with _ws_clients_lock:
+                    _ws_clients[user_id] = {"ws": websocket, "agents": agents}
+                # 为该用户的 Agent 动态注册按钮 action
+                for name in agents:
+                    _ensure_action_registered(name)
+                print(f"[relay] 用户 {user_id} 已连接，Agent列表: {agents}")
+                await websocket.send(json.dumps({"type": "registered", "user_id": user_id}))
+
+            # ── Agent 输出：本地 Agent → Slack ──
+            elif msg_type == "agent_output":
+                _post_agent_output_to_slack(data)
+
+    except websockets.ConnectionClosed:
+        pass
+    finally:
+        if user_id:
+            with _ws_clients_lock:
+                _ws_clients.pop(user_id, None)
+            print(f"[relay] 用户 {user_id} 已断开")
+
+
+async def _run_ws_server():
+    """WebSocket 服务器主循环。"""
+    async with ws_serve(_ws_handler, WS_HOST, WS_PORT):
+        print(f"[relay] WebSocket 服务器已启动: ws://{WS_HOST}:{WS_PORT}")
+        await asyncio.Future()  # 永久运行
+
+
+def _start_ws_server():
+    """在独立线程中启动 WebSocket 服务器。"""
+    global _ws_loop
+    _ws_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_ws_loop)
+    _ws_loop.run_until_complete(_run_ws_server())
+
+
+# ── 启动 ──────────────────────────────────────────────
 
 def main():
-    # 启动 AgentTeam 输出监控线程
-    threading.Thread(target=_slack_output_monitor, daemon=True, name="SlackOutputMonitor").start()
-
-    # 启动 AgentTeam 主循环（daemon 线程）
-    threading.Thread(target=AgentTeamMain, args=(False,), daemon=True, name="AgentTeamThread").start()
-
-    # 注册所有 Agent 按钮 action handler
-    _register_agent_actions()
+    # 启动 WebSocket 服务器线程
+    threading.Thread(target=_start_ws_server, daemon=True, name="WebSocketServer").start()
 
     # 启动 Slack Socket Mode
     socket_token = os.getenv("SLACK_SOCKET_TOKEN")
     if not socket_token:
         print("错误: 未设置 SLACK_SOCKET_TOKEN")
         return
-    print("[slack_bot] Bot 已启动")
+    print("[relay] Slack Bot Relay 已启动")
     SocketModeHandler(app, socket_token).start()
 
 
