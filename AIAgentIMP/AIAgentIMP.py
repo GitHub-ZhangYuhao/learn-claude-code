@@ -28,10 +28,12 @@ from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 from MCPManager import MCPManager
+import GlobalConfig
 
 
 #成员初始化
-_TeammateManager = TeammateManager()
+
+GlobalConfig._TeammateManager = TeammateManager()
 _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 _MAIN_AGENT_EXIT = object()
@@ -56,9 +58,9 @@ TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
 #添加计划工具
 TOOL_HANDLERS["todo"]                   = lambda **kw: _MainAgent_TODO.update(kw["items"])
 #添加Teammate工具
-TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
-TOOL_HANDLERS["list_teammates"]         = lambda **kw: _TeammateManager.list_all()
-TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: _TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
+TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: GlobalConfig._TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
+TOOL_HANDLERS["list_teammates"]         = lambda **kw: GlobalConfig._TeammateManager.list_all()
+TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: GlobalConfig._TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
 #添加MemorySave工具
 TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
 '''
@@ -70,14 +72,14 @@ TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
 for name, config in _SubAgentLoader.load().items():
-    _TeammateManager.spawn(
+    GlobalConfig._TeammateManager.spawn(
                     name=config.name,
                     role=config.description,
                     MCPs=config.MCPs,
                     skills=config.skills,
                     agent_detail=config.detail,
     )
-print(_TeammateManager.list_all())
+print(GlobalConfig._TeammateManager.list_all())
 
 # 加载主Agent skill
 _MainAgent_Skills = SkillRegistry(SKILLS_DIR)
@@ -211,7 +213,7 @@ def enqueue_main_agent_input():
                         print(f"[错误] {e}")
                         continue
 
-            _TeammateManager.send_message_to_agent("Leader", text, "User", images=images)
+            GlobalConfig._TeammateManager.send_message_to_agent("Leader", text, "User", images=images)
 
 def begin_main_agent_single_loop():
     global _MainAgent_IdleStatus
