@@ -3,7 +3,7 @@ from queue import Queue
 from time import sleep
 
 from GlobalConfig import *
-from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
+from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS, compact_history
 from SystemPromptBuilder import SystemPromptBuilder
 import threading
 from dataclasses import dataclass, field
@@ -314,6 +314,9 @@ class TeammateManager:
 
                     if tool_name in _MCPManager.get_mcp_tool_names():
                         output = _MCPManager.call_tool(tool_name, tool_args)
+                    elif tool_name == "compact_history":    # 压缩历史记录工具, 需要单独处理
+                        messages = compact_history(messages)
+                        continue
                     else:
                         handler = teammate_tools_handler.get(tool_name)
                         output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"

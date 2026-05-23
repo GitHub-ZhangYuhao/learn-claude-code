@@ -20,7 +20,7 @@ from GlobalConfig import *
 from SystemPromptBuilder import SystemPromptBuilder
 from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
-from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
+from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS, compact_history
 from TeammateManager import *
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _MainAgent_HOOKS, _AgentTeam_OutputPrint
 from HookManager import *
@@ -95,6 +95,11 @@ def agent_loop(messages: list):
     # 最大工具调用轮次，防止 LLM 陷入工具循环
     max_tool_rounds = 20
     while True:
+        # --[压缩历史记录]--
+        if len(messages) > CONTEXT_LIMIT:
+            MainAgentPrint(f"历史记录长度超过 {CONTEXT_LIMIT}，开始压缩历史记录", "tool_call")
+            messages[:] = compact_history(messages)
+
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
 
@@ -103,7 +108,7 @@ def agent_loop(messages: list):
                 model=MODEL,
                 messages=messages,
                 tools=TOOLS,
-                max_tokens=1000,
+                max_tokens=50000,
             )
             # --[Error Recovery] -- 错误恢复决策错误恢复决策
             recover_decision = error_recovery_manager.choose_recovery(response.choices[0].finish_reason, None)
@@ -148,6 +153,11 @@ def agent_loop(messages: list):
             # MCP 工具单独分发
             if tool_name in _MCPManager.get_mcp_tool_names():
                 output = _MCPManager.call_tool(tool_name, tool_args)
+            elif tool_name == "compact_history":    # 压缩历史记录工具, 需要单独处理
+                MainAgentPrint("开始压缩历史记录",  "tool_call")
+                messages = compact_history(messages)
+                MainAgentPrint(f"压缩历史记录结果：{messages}",  "tool_result")
+                continue
             else:
                 handler = TOOL_HANDLERS.get(tool_name)
                 output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
@@ -244,6 +254,14 @@ def AgentTeamMain(should_use_input_thread:bool = True):
         # tick 获取 用户输入
         if not _MainAgent_InputQueue.empty():
             user_query_stream = _MainAgent_InputQueue.get()
+
+            # --[手动触发压缩历史记录]--
+            if "/compact" in user_query_stream["content"]:
+                MainAgentPrint("手动触发压缩历史记录", "tool_call")
+                history = compact_history(history)
+                continue
+
+
             history.append(user_query_stream)
 
             # [HOOK] 添加 SessionStart Hook
