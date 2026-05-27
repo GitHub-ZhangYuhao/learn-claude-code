@@ -15,6 +15,15 @@
             "transport": "streamable_http",
             "url": "http://127.0.0.1:8002/mcp",
             "enabled": false
+        },
+        "Rider": {
+            "transport": "sse",
+            "url": "http://127.0.0.1:64342/sse",
+            "enabled": true
+        },
+        "narwhal-unreal": {
+          "disabled": false,
+          "serverUrl": "http://localhost:8766/mcp"
         }
     }
 }
