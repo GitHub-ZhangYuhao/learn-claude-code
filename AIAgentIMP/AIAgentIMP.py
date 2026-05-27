@@ -20,7 +20,7 @@ from GlobalConfig import *
 from SystemPromptBuilder import SystemPromptBuilder
 from ErrorRecovery import ErrorRecoveryManager
 from TodoManager import TODO_TOOL_SCHEMA, TodoManager
-from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS
+from DefaultToolManager import BASIC_TOOLS, BASIC_TOOL_HANDLERS, compact_history
 from TeammateManager import *
 from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgent_Lock, _MainAgent_HOOKS, _AgentTeam_OutputPrint
 from HookManager import *
@@ -28,10 +28,12 @@ from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 from MCPManager import MCPManager
+import GlobalConfig
 
 
 #成员初始化
-_TeammateManager = TeammateManager()
+
+GlobalConfig._TeammateManager = TeammateManager()
 _MainAgent_TODO = TodoManager()
 _SystemPromptManger = None
 _MAIN_AGENT_EXIT = object()
@@ -56,9 +58,9 @@ TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
 #添加计划工具
 TOOL_HANDLERS["todo"]                   = lambda **kw: _MainAgent_TODO.update(kw["items"])
 #添加Teammate工具
-TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: _TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
-TOOL_HANDLERS["list_teammates"]         = lambda **kw: _TeammateManager.list_all()
-TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: _TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
+TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: GlobalConfig._TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
+TOOL_HANDLERS["list_teammates"]         = lambda **kw: GlobalConfig._TeammateManager.list_all()
+TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: GlobalConfig._TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
 #添加MemorySave工具
 TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
 '''
@@ -70,14 +72,14 @@ TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
 for name, config in _SubAgentLoader.load().items():
-    _TeammateManager.spawn(
+    GlobalConfig._TeammateManager.spawn(
                     name=config.name,
                     role=config.description,
                     MCPs=config.MCPs,
                     skills=config.skills,
                     agent_detail=config.detail,
     )
-print(_TeammateManager.list_all())
+print(GlobalConfig._TeammateManager.list_all())
 
 # 加载主Agent skill
 _MainAgent_Skills = SkillRegistry(SKILLS_DIR)
@@ -93,6 +95,11 @@ def agent_loop(messages: list):
     # 最大工具调用轮次，防止 LLM 陷入工具循环
     max_tool_rounds = 20
     while True:
+        # --[压缩历史记录]--
+        if len(messages) > CONTEXT_LIMIT:
+            MainAgentPrint(f"历史记录长度超过 {CONTEXT_LIMIT}，开始压缩历史记录", "tool_call")
+            messages[:] = compact_history(messages)
+
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
 
@@ -101,7 +108,7 @@ def agent_loop(messages: list):
                 model=MODEL,
                 messages=messages,
                 tools=TOOLS,
-                max_tokens=1000,
+                max_tokens=50000,
             )
             # --[Error Recovery] -- 错误恢复决策错误恢复决策
             recover_decision = error_recovery_manager.choose_recovery(response.choices[0].finish_reason, None)
@@ -146,6 +153,11 @@ def agent_loop(messages: list):
             # MCP 工具单独分发
             if tool_name in _MCPManager.get_mcp_tool_names():
                 output = _MCPManager.call_tool(tool_name, tool_args)
+            elif tool_name == "compact_history":    # 压缩历史记录工具, 需要单独处理
+                MainAgentPrint("开始压缩历史记录",  "tool_call")
+                messages = compact_history(messages)
+                MainAgentPrint(f"压缩历史记录结果：{messages}",  "tool_result")
+                continue
             else:
                 handler = TOOL_HANDLERS.get(tool_name)
                 output = handler(**tool_args) if handler else f"Unknow Tool: {tool_name}"
@@ -211,7 +223,7 @@ def enqueue_main_agent_input():
                         print(f"[错误] {e}")
                         continue
 
-            _TeammateManager.send_message_to_agent("Leader", text, "User", images=images)
+            GlobalConfig._TeammateManager.send_message_to_agent("Leader", text, "User", images=images)
 
 def begin_main_agent_single_loop():
     global _MainAgent_IdleStatus
@@ -242,6 +254,14 @@ def AgentTeamMain(should_use_input_thread:bool = True):
         # tick 获取 用户输入
         if not _MainAgent_InputQueue.empty():
             user_query_stream = _MainAgent_InputQueue.get()
+
+            # --[手动触发压缩历史记录]--
+            if "/compact" in user_query_stream["content"]:
+                MainAgentPrint("手动触发压缩历史记录", "tool_call")
+                history = compact_history(history)
+                continue
+
+
             history.append(user_query_stream)
 
             # [HOOK] 添加 SessionStart Hook

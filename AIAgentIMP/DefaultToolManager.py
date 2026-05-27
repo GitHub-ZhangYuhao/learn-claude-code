@@ -49,6 +49,26 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+def compact_history(history: list) -> list:
+    conversation = json.dumps(history, default=str)[:80000]
+    prompt = (
+        "需保留内容：\n"
+        "当前工作目标\n"
+        "关键发现与决策\n"
+        "读取及修改过的文件\n"
+        "剩余待完成任务\n"
+        "用户限制要求与使用偏好\n"
+        "行文简洁凝练，内容详实具体\n"
+        f"{conversation}"
+    )
+    response = client.chat.completions.create(
+        model = MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000,)
+    compact_content = response.choices[0].message.content
+    return [{"role": "user", "content": f"> 以下为上下文压缩结果：\n {compact_content}"}]
+
+
 
 '''
 Tool Handler
@@ -82,5 +102,9 @@ BASIC_TOOLS = [
     {"type": "function", "function": {
         "name": "edit_file", "description": "Replace exact text in file.",
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}
+    }},
+    {"type": "function", "function": {
+        "name": "compact_history", "description": "Compact a long conversation history into a concise summary to save context window space. Extracts key goals, findings, decisions, and remaining tasks.",
+        "parameters": {"type": "object", "properties": {"history": {"type": "array", "description": "List of conversation messages to compact, each with 'role' and 'content' fields.", "items": {"type": "object", "properties": {"role": {"type": "string"}, "content": {"type": "string"}}, "required": ["role", "content"]}}}, "required": ["history"]}
     }},
 ]

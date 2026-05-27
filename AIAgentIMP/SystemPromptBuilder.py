@@ -1,5 +1,6 @@
 from typing import Optional
 
+import GlobalConfig
 from GlobalConfig import *
 from SkillManager import *
 
@@ -86,6 +87,14 @@ class SystemPromptBuilder:
         if not memories:
             return ""
         return "# 记忆（持久化）\n\n" + "\n\n".join(memories)
+
+    def _build_teammate_section(self) -> str:
+        if not GlobalConfig._TeammateManager:
+            return "当前团队没有子Agent"
+        else:
+            teammates_section = "# 子Agent 列表:\n"
+            teammates_section += (GlobalConfig._TeammateManager.list_all())
+            return teammates_section
 
     def _build_claude_md(self) -> str:
         """
@@ -178,6 +187,10 @@ class SystemPromptBuilder:
         agent_directory = self._build_agent_directory()
         if agent_directory:
             sections.append(agent_directory)
+
+        teammates_section = self._build_teammate_section()
+        if teammates_section:
+            sections.append(teammates_section)
 
         memory = self._build_memory_section()
         if memory:
