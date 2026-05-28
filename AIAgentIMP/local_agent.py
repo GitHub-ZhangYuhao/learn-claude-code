@@ -35,7 +35,8 @@ if not SLACK_USER_ID:
     exit(1)
 
 # ── 导入 AgentTeam 基础设施 ─────────────────────────────────────────
-from AIAgentIMP import AgentTeamMain, _TeammateManager, _AgentTeam_OutputPrint
+from AIAgentIMP import AgentTeamMain
+from GlobalConfig import _TeammateManager, _AgentTeam_OutputPrint
 from TeammateManager import TeammateManager
 
 # WebSocket 连接引用（全局）

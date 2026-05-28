@@ -22,8 +22,9 @@
             "enabled": true
         },
         "narwhal-unreal": {
-          "disabled": false,
-          "serverUrl": "http://localhost:8766/mcp"
+            "transport": "streamable_http",
+            "url": "http://localhost:8766/mcp",
+            "enabled": true
         }
     }
 }
