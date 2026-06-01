@@ -19,7 +19,7 @@
         "Rider": {
             "transport": "sse",
             "url": "http://127.0.0.1:64342/sse",
-            "enabled": true
+            "enabled": false
         },
         "narwhal-unreal": {
             "transport": "streamable_http",

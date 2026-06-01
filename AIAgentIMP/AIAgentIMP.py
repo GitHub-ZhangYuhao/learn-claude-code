@@ -28,6 +28,7 @@ from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 from MCPManager import MCPManager
+from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS
 import GlobalConfig
 
 
@@ -63,11 +64,13 @@ TOOL_HANDLERS["list_teammates"]         = lambda **kw: GlobalConfig._TeammateMan
 TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: GlobalConfig._TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
 #添加MemorySave工具
 TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
+#添加图片生成工具
+TOOL_HANDLERS.update(IMAGE_GENERATION_TOOL_HANDLERS)
 '''
 Tool Schema
 '''
-# 基础工具 + 计划工具 + Teammate工具 + 记忆工具 + MCP工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + _MCPManager.get_tools_schema()
+# 基础工具 + 计划工具 + Teammate工具 + 记忆工具 + 图片生成工具 + MCP工具
+TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + IMAGE_GENERATION_TOOL + _MCPManager.get_tools_schema()
 
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
@@ -103,11 +106,14 @@ def agent_loop(messages: list):
         # 构建 系统提示词
         messages = _SystemPromptManger.setup_system_prompt(messages)
 
+        #初始化
+        response = None
+
         try:
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
-                tools=TOOLS,
+                tools=TOOLS[:128],  #OpenAI限制最大工具为128 个
                 max_tokens=50000,
             )
             # --[Error Recovery] -- 错误恢复决策错误恢复决策
