@@ -28,7 +28,7 @@ from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 from MCPManager import MCPManager
-from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS
+from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths
 import GlobalConfig
 
 
@@ -147,6 +147,9 @@ def agent_loop(messages: list):
         if response.choices[0].finish_reason != "tool_calls":
             return
 
+        # 待回喂的 vision 消息（在所有 tool_calls 处理完后统一追加，避免破坏消息顺序）
+        pending_vision_messages = []
+
         # 遍历所有的 toolcall
         for ToolCall in response.choices[0].message.tool_calls:
             tool_name = ToolCall.function.name
@@ -185,6 +188,20 @@ def agent_loop(messages: list):
             # 将 toolcall 添加到 messages 历史中
             result = {"role": "tool", "tool_call_id": ToolCall.id,"content": output}
             messages.append(result)
+
+            # 图片生成工具：收集 vision 回喂消息（循环结束后统一追加）
+            if tool_name == "generate_image":
+                vision_msg = build_vision_feedback_message(output)
+                if vision_msg:
+                    pending_vision_messages.append(vision_msg)
+                # 推送生成的图片路径到前端（如 Slack），content 为本地文件路径
+                for img_path in extract_saved_paths(output):
+                    MainAgentPrint(img_path, "image")
+
+        # 所有 tool 结果追加完毕后，再统一追加 vision 回喂消息，让 Agent "看到"生成的图
+        for vision_msg in pending_vision_messages:
+            messages.append(vision_msg)
+            MainAgentPrint("已将生成的图片回喂给 Agent（vision）", "tool_result")
 
         # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
         messages = _MainAgent_TODO.post_tool_call(messages)
