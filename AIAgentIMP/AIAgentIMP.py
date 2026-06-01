@@ -70,7 +70,13 @@ TOOL_HANDLERS.update(IMAGE_GENERATION_TOOL_HANDLERS)
 Tool Schema
 '''
 # 基础工具 + 计划工具 + Teammate工具 + 记忆工具 + 图片生成工具 + MCP工具
-TOOLS = BASIC_TOOLS + TODO_TOOL_SCHEMA + TEAMMATE_TOOL_SCHEMA + SPAWN_AGENT_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + IMAGE_GENERATION_TOOL + _MCPManager.get_tools_schema()
+TOOLS = (BASIC_TOOLS +
+         TODO_TOOL_SCHEMA +
+         TEAMMATE_TOOL_SCHEMA +
+         SPAWN_AGENT_TOOL_SCHEMA +
+         MEMORY_MANAGER_TOOL_SCHEMA +
+         IMAGE_GENERATION_TOOL +
+         _MCPManager.get_tools_schema())
 
 # 加载 .agent 下的所有子Agent
 _SubAgentLoader = SubAgentLoader()
@@ -96,7 +102,6 @@ def agent_loop(messages: list):
     # --[Error Recovery] -- 初始化
     error_recovery_manager = ErrorRecoveryManager()
     # 最大工具调用轮次，防止 LLM 陷入工具循环
-    max_tool_rounds = 20
     while True:
         # --[压缩历史记录]--
         if len(messages) > CONTEXT_LIMIT:
