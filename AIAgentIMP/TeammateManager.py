@@ -1,4 +1,4 @@
-﻿import time
+import time
 from queue import Queue
 from time import sleep
 
@@ -11,6 +11,7 @@ from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgen
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 from MCPManager import MCPManager
 from HookManager import *
+from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths
 
 # 全局 MCP 管理器实例（与主 Agent 共享）
 _MCPManager = MCPManager()
@@ -296,6 +297,10 @@ class TeammateManager:
 
                 if response.choices[0].finish_reason != "tool_calls":
                     break
+
+                # 待回喂的 vision 消息（在所有 tool_calls 处理完后统一追加，避免破坏消息顺序）
+                pending_vision_messages = []
+
                 # 遍历所有的 tool_call
                 for ToolCall in response.choices[0].message.tool_calls:
                     # 初始化 toolcall 的参数
@@ -331,8 +336,19 @@ class TeammateManager:
 
                     # 将 toolcall 添加到 messages 历史中
                     result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
-                    result = {"role": "tool", "tool_call_id": ToolCall.id, "content": output}
                     messages.append(result)
+
+                    # 图片生成工具：收集 vision 回喂消息，并推送图片到前端（如 Slack）
+                    if tool_name == "generate_image":
+                        vision_msg = build_vision_feedback_message(output)
+                        if vision_msg:
+                            pending_vision_messages.append(vision_msg)
+                        for img_path in extract_saved_paths(output):
+                            agentprint(name, img_path, "image")
+
+                # 所有 tool 结果追加完毕后，再统一追加 vision 回喂消息，让子 Agent “看到”生成的图
+                for vision_msg in pending_vision_messages:
+                    messages.append(vision_msg)
 
             # Agent 单论对话执行完毕，更新成员状态为 idle
             self.end_agent_single_loop(name, messages[-1]["content"], messages)
@@ -360,7 +376,7 @@ class TeammateManager:
                 if any(t["function"]["name"].startswith(f"{mcp}_") for mcp in allowed_mcps)
             ]
 
-        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + all_mcp_tools
+        return BASIC_TOOLS + TEAMMATE_TOOL_SCHEMA + MEMORY_MANAGER_TOOL_SCHEMA + IMAGE_GENERATION_TOOL + all_mcp_tools
 
     def _teammate_tools_handler(self) -> dict:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
@@ -369,6 +385,8 @@ class TeammateManager:
             kw["agent_name"], kw["prompt"], kw["send_from"]
         )
         TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
+        # 图片生成工具
+        TOOL_HANDLERS.update(IMAGE_GENERATION_TOOL_HANDLERS)
         # 子Agent不能派生新的子Agent
         # TOOL_HANDLERS["spawn_teammate"] = lambda **kw: self.spawn(
         #     kw["name"], kw["role"],
