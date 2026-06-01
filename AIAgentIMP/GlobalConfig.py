@@ -1,15 +1,23 @@
-﻿from datetime import datetime
+from datetime import datetime
 import json
 import os
 import platform
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from queue import Queue
 from SkillManager import SkillRegistry
+
+# 修复 Windows 控制台中文乱码：强制 stdout/stderr 使用 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 
 load_dotenv(override=True)

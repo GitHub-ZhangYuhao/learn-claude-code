@@ -33,6 +33,8 @@ app = App(token=os.getenv("SLACK_BOT_TOKEN"))
 # WebSocket 服务器配置
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
 WS_PORT = int(os.getenv("WS_PORT", "8765"))
+# 单帧最大字节数，需足够大以容纳图片 base64（默认 1MB 太小会断连）
+WS_MAX_MESSAGE_SIZE = 32 * 1024 * 1024  # 32 MB
 
 # ── Slack Block Kit 卡片构建 ──────────────────────────────────────────
 
@@ -277,6 +279,48 @@ def _send_to_local_agent(user_id: str, message: dict) -> bool:
         return False
 
 
+def _upload_image_to_slack(info: dict, thread_ts: str, agent_name: str, data: dict):
+    """将本地 Agent 生成的图片（base64）上传到 Slack thread。"""
+    img_b64 = data.get("image_b64")
+    image_name = data.get("image_name") or "generated_image.png"
+    if not img_b64:
+        print(f"[relay] image 消息缺少 image_b64，跳过: {image_name}")
+        return
+
+    try:
+        raw = base64.b64decode(img_b64)
+    except Exception as e:
+        print(f"[relay] 图片 base64 解码失败 {image_name}: {e}")
+        return
+
+    # 先 flush 已缓冲的文本卡片，尽量保证图片与文本的展示顺序
+    blocks = _slack_card_builder.force_flush(thread_ts)
+    if blocks:
+        try:
+            info["client"].chat_postMessage(
+                channel=info["channel"],
+                thread_ts=thread_ts,
+                text=f"[{agent_name}] 新消息",
+                blocks=blocks,
+            )
+        except Exception as e:
+            print(f"[relay] flush 文本卡片失败: {e}")
+
+    try:
+        info["client"].files_upload_v2(
+            channel=info["channel"],
+            thread_ts=thread_ts,
+            file=raw,
+            filename=image_name,
+            title=image_name,
+            initial_comment=f":frame_with_picture: [{agent_name}] 生成的图片",
+        )
+        info["_last_flush"] = time()
+        print(f"[relay] 已上传图片到 Slack: {image_name} ({len(raw)} bytes)")
+    except Exception as e:
+        print(f"[relay] 图片上传 Slack 失败 {image_name}: {e}")
+
+
 def _post_agent_output_to_slack(data: dict):
     """将本地 Agent 回传的输出推送到 Slack thread。"""
     thread_ts = data.get("thread_ts")
@@ -288,6 +332,11 @@ def _post_agent_output_to_slack(data: dict):
 
     info = _active_threads.get(thread_ts)
     if not info:
+        return
+
+    # image 类型：上传生成的图片文件到 Slack thread
+    if msg_type == "image":
+        _upload_image_to_slack(info, thread_ts, agent_name, data)
         return
 
     blocks = _slack_card_builder.add_message(thread_ts, agent_name, msg_type, content)
@@ -649,7 +698,7 @@ async def _ws_handler(websocket):
 
 async def _run_ws_server():
     """WebSocket 服务器主循环。"""
-    async with ws_serve(_ws_handler, WS_HOST, WS_PORT):
+    async with ws_serve(_ws_handler, WS_HOST, WS_PORT, max_size=WS_MAX_MESSAGE_SIZE):
         print(f"[relay] WebSocket 服务器已启动: ws://{WS_HOST}:{WS_PORT}")
         await asyncio.Future()  # 永久运行
 

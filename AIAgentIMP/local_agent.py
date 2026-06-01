@@ -15,6 +15,7 @@ ToolCall 在本地执行，结果通过 WebSocket 回传到 Relay → Slack。
 
 import os
 import json
+import base64
 import asyncio
 import threading
 from time import sleep
@@ -28,6 +29,8 @@ load_dotenv()
 # ── 配置 ────────────────────────────────────────────────────────────
 SLACK_USER_ID = os.getenv("SLACK_USER_ID", "")
 WS_SERVER_URL = os.getenv("WS_SERVER_URL", "ws://localhost:8765")
+# 单帧最大字节数，需足够大以容纳图片 base64（默认 1MB 太小会断连）
+WS_MAX_MESSAGE_SIZE = 32 * 1024 * 1024  # 32 MB
 
 if not SLACK_USER_ID:
     print("错误: 请在 .env 中设置 SLACK_USER_ID（你的 Slack 用户 ID）")
@@ -92,7 +95,7 @@ async def _ws_client():
     while True:
         try:
             print(f"[local] 正在连接 Relay 服务器: {WS_SERVER_URL}")
-            async with websockets.connect(WS_SERVER_URL) as ws:
+            async with websockets.connect(WS_SERVER_URL, max_size=WS_MAX_MESSAGE_SIZE) as ws:
                 _ws_connection = ws
 
                 # ── 注册 ──
@@ -156,6 +159,18 @@ async def _forward_output(ws):
             "msg_type": msg_type,
             "content": content,
         }
+
+        # image 类型：content 是本地图片路径，读取文件 base64 后一并发送，供 Relay 上传到 Slack
+        if msg_type == "image":
+            try:
+                with open(content, "rb") as f:
+                    payload["image_b64"] = base64.b64encode(f.read()).decode("utf-8")
+                payload["image_name"] = os.path.basename(content)
+                payload["content"] = os.path.basename(content)
+            except Exception as e:
+                print(f"[local] 读取图片失败 {content}: {e}")
+                continue
+
         try:
             await ws.send(json.dumps(payload))
         except Exception as e:

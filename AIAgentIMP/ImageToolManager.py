@@ -147,6 +147,40 @@ def load_image_as_vision(file_path: str) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
+# 落盘路径在 generate_image 返回字符串中的行前缀
+_SAVED_LINE_PREFIX = "- 已保存: "
+
+
+def extract_saved_paths(tool_output: str) -> list:
+    """从 generate_image 的返回字符串中解析出已落盘的图片路径。"""
+    if not tool_output:
+        return []
+    paths = []
+    for line in tool_output.splitlines():
+        line = line.strip()
+        if line.startswith(_SAVED_LINE_PREFIX):
+            paths.append(line[len(_SAVED_LINE_PREFIX):].strip())
+    return paths
+
+
+def build_vision_feedback_message(tool_output: str) -> dict | None:
+    """
+    根据 generate_image 的返回结果构建一条带图片的 user 消息（vision 回喂）。
+    让 Agent 能"看到"自己刚生成的图，便于评估/迭代。无可用图片则返回 None。
+    """
+    paths = extract_saved_paths(tool_output)
+    images = []
+    for p in paths:
+        try:
+            images.append(load_image_as_vision(p))
+        except FileNotFoundError:
+            continue
+    if not images:
+        return None
+    text = {"type": "text", "text": "以下是你刚刚生成的图片，请查看效果。如果不符合预期，可以调整 prompt 重新生成。"}
+    return {"role": "user", "content": [text] + images}
+
+
 # ---------------- 工具 Schema 与 Handler ----------------
 
 IMAGE_GENERATION_TOOL = [
