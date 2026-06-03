@@ -189,20 +189,19 @@ def agent_loop(messages: list):
             result = {"role": "tool", "tool_call_id": ToolCall.id,"content": output}
             messages.append(result)
 
-        #       暂时注释掉图片回喂模型
-        #     # 图片生成工具：收集 vision 回喂消息（循环结束后统一追加）
-        #     if tool_name == "generate_image":
-        #         vision_msg = build_vision_feedback_message(output)
-        #         if vision_msg:
-        #             pending_vision_messages.append(vision_msg)
-        #         # 推送生成的图片路径到前端（如 Slack），content 为本地文件路径
-        #         for img_path in extract_saved_paths(output):
-        #             MainAgentPrint(img_path, "image")
-        #
-        # # 所有 tool 结果追加完毕后，再统一追加 vision 回喂消息，让 Agent "看到"生成的图
-        # for vision_msg in pending_vision_messages:
-        #     messages.append(vision_msg)
-        #     MainAgentPrint("已将生成的图片回喂给 Agent（vision）", "tool_result")
+            # 图片生成工具：收集 vision 回喂消息（循环结束后统一追加）
+            if tool_name == "generate_image":
+                vision_msg = build_vision_feedback_message(output)
+                if vision_msg:
+                    pending_vision_messages.append(vision_msg)
+                # 推送生成的图片路径到前端（如 Slack），content 为本地文件路径
+                for img_path in extract_saved_paths(output):
+                    MainAgentPrint(img_path, "image")
+
+        # 所有 tool 结果追加完毕后，再统一追加 vision 回喂消息，让 Agent "看到"生成的图
+        for vision_msg in pending_vision_messages:
+            messages.append(vision_msg)
+            MainAgentPrint("已将生成的图片回喂给 Agent（vision）", "tool_result")
 
         # 代办工具需要特殊处理，需要在 toolcall 后添加 3 轮的提醒
         messages = _MainAgent_TODO.post_tool_call(messages)

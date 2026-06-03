@@ -28,6 +28,9 @@ GENERATED_IMAGES_DIR = Path(__file__).resolve().parent / "generated_images"
 # 每边最小尺寸
 MIN_IMAGE_SIZE = 1024
 
+# 落盘路径在 generate_image 返回字符串中的行前缀
+_SAVED_LINE_PREFIX = "- 已保存图片到路径: "
+
 # 支持的图片扩展名 -> MIME 类型（供 vision 回喂使用）
 _MIME_MAP = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -124,7 +127,7 @@ def generate_image(prompt: str, size_x: int, size_y: int,
 
     lines = [f"已生成 {total} 张图片（尺寸 {size_x}x{size_y}）："]
     for p in saved_paths:
-        lines.append(f"- 已保存图片到路径: {p}")
+        lines.append(f"{_SAVED_LINE_PREFIX}{p}")
     for u in urls:
         lines.append(f"- URL: {u}")
     if clamped:
@@ -145,10 +148,6 @@ def load_image_as_vision(file_path: str) -> dict:
     with open(file_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
-
-
-# 落盘路径在 generate_image 返回字符串中的行前缀
-_SAVED_LINE_PREFIX = "- 已保存: "
 
 
 def extract_saved_paths(tool_output: str) -> list:
