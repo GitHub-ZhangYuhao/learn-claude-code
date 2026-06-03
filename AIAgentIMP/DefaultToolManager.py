@@ -1,4 +1,4 @@
-﻿from GlobalConfig import *
+from GlobalConfig import *
 
 def safe_path(p: str) -> Path:
     path = (WORKDIR / p).resolve()
@@ -12,12 +12,14 @@ def run_bash(command: str) -> str:
         return "Error: Dangerous command blocked"
     try:
         r = subprocess.run(command, shell=True, cwd=WORKDIR,
-                           capture_output=True, text=True, timeout=120,
+                           capture_output=True, text=True, timeout=60,
                            encoding="utf-8", errors="replace")
         out = (r.stdout + r.stderr).strip()
         return out[:50000] if out else "(no output)"
-    except subprocess.TimeoutExpired:
-        return "Error: Timeout (120s)"
+    except subprocess.TimeoutExpired as e:
+        partial = ((e.stdout or "") + (e.stderr or "")).strip()
+        msg = "Error: Timeout (600s)"
+        return f"{msg}\n--- partial output ---\n{partial[:50000]}" if partial else msg
 
 def run_read(path: str, limit: int = None) -> str:
     try:

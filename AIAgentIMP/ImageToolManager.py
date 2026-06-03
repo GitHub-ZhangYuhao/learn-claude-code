@@ -124,7 +124,7 @@ def generate_image(prompt: str, size_x: int, size_y: int,
 
     lines = [f"已生成 {total} 张图片（尺寸 {size_x}x{size_y}）："]
     for p in saved_paths:
-        lines.append(f"- 已保存: {p}")
+        lines.append(f"- 已保存图片到路径: {p}")
     for u in urls:
         lines.append(f"- URL: {u}")
     if clamped:

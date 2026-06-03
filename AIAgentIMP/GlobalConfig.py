@@ -31,7 +31,7 @@ INBOX_DIR = TEAM_DIR / "inbox"
 SKILLS_DIR = WORKDIR / "skills"
 SUB_AGENT_DIR = WORKDIR / ".agent"
 
-CONTEXT_LIMIT = 10
+CONTEXT_LIMIT = 60
 
 _MainAgent_Skills : SkillRegistry = None
 _MainAgent_InputQueue = Queue(maxsize=3)

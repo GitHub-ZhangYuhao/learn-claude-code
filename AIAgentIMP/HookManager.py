@@ -87,7 +87,7 @@ class HookManager:
                     case 0:
                         #静默继续
                         if r.stdout.strip():
-                            print(f" [hook: {event}] {r.stdout.strip()[:100]}")
+                            print(f" [hook: {event}] {r.stdout.strip()[:400]}")
 
                         # 可选结构化 stdout: 一个保持教学约定简单扩展点
                         try:
@@ -109,14 +109,14 @@ class HookManager:
                         result["blocked"] = True
                         reason = r.stderr.strip() or "被hook阻止"
                         result["block_reason"] = reason
-                        print(f" [hook:{event}] 已阻止： {reason[:200]}")
+                        print(f" [hook:{event}] 已阻止： {reason[:400]}")
 
                     case 2:
                         #注入消息
                         msg = r.stderr.strip() #不知道为啥这里要用 stderr, 我想用 stdout, 感觉更合理一点
                         if msg:
                             result["messages"].append(msg)
-                            print(f" [hook: {event}] 注入：{msg[:200]}")
+                            print(f" [hook: {event}] 注入：{msg[:400]}")
 
             except subprocess.TimeoutExpired:
                 print(f" [hook:{event}] 超时：（{HOOK_TIMEOUT}s）")
