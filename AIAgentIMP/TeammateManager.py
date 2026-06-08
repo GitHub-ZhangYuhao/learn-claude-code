@@ -11,7 +11,7 @@ from GlobalConfig import _MainAgent_InputQueue, _MainAgent_IdleStatus, _MainAgen
 from MemoryManager import MEMORY_MANAGER_TOOL_SCHEMA,MEMORY_SAVE_MEMORY_TOOL_HANDLERS, _MEMORY_MANAGER
 from MCPManager import MCPManager
 from HookManager import *
-from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths
+from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths, load_images_as_vision
 
 # 全局 MCP 管理器实例（与主 Agent 共享）
 _MCPManager = MCPManager()
@@ -128,6 +128,11 @@ TEAMMATE_TOOL_SCHEMA = [
                     "send_from": {
                         "type": "string",
                         "description": "The name of the sender."
+                    },
+                    "image_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选，要随消息一并转交给目标 Agent 的本地图片路径列表（如用户上传后落盘的图、或生成的图）。目标 Agent 会以 vision 形式看到这些图。"
                     }
                 },
                 "required": ["agent_name", "prompt", "send_from"]
@@ -382,7 +387,8 @@ class TeammateManager:
         TOOL_HANDLERS = BASIC_TOOL_HANDLERS.copy()
         TOOL_HANDLERS["list_teammates"] = lambda **kw: self.list_all()
         TOOL_HANDLERS["send_message_to_agent"] = lambda **kw: self.send_message_to_agent(
-            kw["agent_name"], kw["prompt"], kw["send_from"]
+            kw["agent_name"], kw["prompt"], kw["send_from"],
+            images=load_images_as_vision(kw.get("image_paths")),
         )
         TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
         # 图片生成工具

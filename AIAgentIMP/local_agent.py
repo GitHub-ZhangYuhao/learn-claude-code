@@ -41,6 +41,7 @@ if not SLACK_USER_ID:
 from AIAgentIMP import AgentTeamMain
 from GlobalConfig import _TeammateManager, _AgentTeam_OutputPrint
 from TeammateManager import TeammateManager
+from ImageToolManager import save_data_url_image
 
 # WebSocket 连接引用（全局）
 _ws_connection = None
@@ -79,6 +80,21 @@ def _route_message_to_agent(data: dict):
     # 保存 thread_ts 到全局，供输出回传时使用
     global _current_thread_ts
     _current_thread_ts = thread_ts
+
+    # 入站图片落盘：把 base64 vision 图保存到 uploads/，并把文件路径注入消息文本，
+    # 这样 Leader 既能"看到"图（内联 vision），又知道图的本地路径，可通过
+    # send_message_to_agent 的 image_paths 参数转交给子 Agent。
+    saved_paths = []
+    for img in images:
+        data_url = (img.get("image_url") or {}).get("url", "") if isinstance(img, dict) else ""
+        path = save_data_url_image(data_url, name_prefix="slack")
+        if path:
+            saved_paths.append(path)
+    if saved_paths:
+        path_lines = "\n".join(f"- {p}" for p in saved_paths)
+        text = (f"{text}\n\n[已保存用户上传的图片到本地，如需让子 Agent 处理，"
+                f"请用 send_message_to_agent 的 image_paths 参数传入以下路径]：\n{path_lines}")
+        print(f"[local] 已落盘 {len(saved_paths)} 张上传图片到 uploads/")
 
     _TeammateManager.send_message_to_agent(target_agent, text, f"SlackUser:{user_id}", images=images)
 

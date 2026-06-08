@@ -302,6 +302,49 @@ def load_image_as_vision(file_path: str) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
+# 入站图片（如 Slack 上传）落盘目录
+UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
+# data URL 的 mime -> 扩展名
+_DATA_URL_EXT = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+    "image/gif": ".gif", "image/webp": ".webp",
+}
+
+
+def save_data_url_image(data_url: str, name_prefix: str = "upload") -> str | None:
+    """把 data:image/...;base64,xxx 形式的图片落盘到 uploads/，返回绝对路径。
+
+    解析失败或不是 data URL（如普通 http url）时返回 None。
+    """
+    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
+        return None
+    try:
+        header, b64 = data_url.split(",", 1)
+        mime = header[len("data:"):].split(";")[0].strip().lower()
+        ext = _DATA_URL_EXT.get(mime, ".png")
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        fname = f"{name_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
+        path = UPLOADS_DIR / fname
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(b64))
+        return str(path)
+    except Exception:
+        return None
+
+
+def load_images_as_vision(paths) -> list:
+    """把一组本地图片路径转成 vision 格式列表，自动跳过不存在/加载失败的项。"""
+    if isinstance(paths, str):
+        paths = [paths]
+    images = []
+    for p in paths or []:
+        try:
+            images.append(load_image_as_vision(p))
+        except Exception:
+            continue
+    return images
+
+
 def extract_saved_paths(tool_output: str) -> list:
     """从 generate_image 的返回字符串中解析出已落盘的图片路径。"""
     if not tool_output:

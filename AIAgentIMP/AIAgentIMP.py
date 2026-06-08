@@ -28,7 +28,7 @@ from SkillManager import SkillRegistry
 from SubAgentLoader import SubAgentLoader
 from MemoryManager import MEMORY_SAVE_MEMORY_TOOL_HANDLERS, MEMORY_MANAGER_TOOL_SCHEMA
 from MCPManager import MCPManager
-from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths
+from ImageToolManager import IMAGE_GENERATION_TOOL, IMAGE_GENERATION_TOOL_HANDLERS, build_vision_feedback_message, extract_saved_paths, load_images_as_vision
 import GlobalConfig
 
 
@@ -61,7 +61,7 @@ TOOL_HANDLERS["todo"]                   = lambda **kw: _MainAgent_TODO.update(kw
 #添加Teammate工具
 TOOL_HANDLERS["spawn_teammate"]         = lambda **kw: GlobalConfig._TeammateManager.spawn(kw["name"], kw["role"], kw.get("prompt"))
 TOOL_HANDLERS["list_teammates"]         = lambda **kw: GlobalConfig._TeammateManager.list_all()
-TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: GlobalConfig._TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"])
+TOOL_HANDLERS["send_message_to_agent"]  = lambda **kw: GlobalConfig._TeammateManager.send_message_to_agent(kw["agent_name"], kw["prompt"], kw["send_from"], images=load_images_as_vision(kw.get("image_paths")))
 #添加MemorySave工具
 TOOL_HANDLERS.update(MEMORY_SAVE_MEMORY_TOOL_HANDLERS)
 #添加图片生成工具
