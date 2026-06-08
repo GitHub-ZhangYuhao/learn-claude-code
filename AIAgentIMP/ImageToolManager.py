@@ -27,6 +27,62 @@ load_dotenv(override=True)
 GENERATED_IMAGES_DIR = Path(__file__).resolve().parent / "generated_images"
 # 每边最小尺寸
 MIN_IMAGE_SIZE = 1024
+# 尺寸必须能被该值整除（OpenAI Image2 的硬性要求）
+SIZE_DIVISOR = 16
+# 触发最小分辨率 / 整除限制的图像模型关键字（OpenAI Image2 系列）
+_OPENAI_IMAGE2_KEYWORDS = ("image2", "image-2", "gpt-image")
+
+
+def _is_openai_image2_model(model: str = None) -> bool:
+    """判断当前图像模型是否为 OpenAI Image2 系列（需要最小 1024 且能被 16 整除）。"""
+    model = (model or os.getenv("image_model") or "").lower()
+    return any(k in model for k in _OPENAI_IMAGE2_KEYWORDS)
+
+
+# Gemini 图像模型支持的宽高比档位（用于图生图：edit 端点忽略 size，只认 aspect_ratio）
+_GEMINI_ASPECT_RATIOS = [
+    (1, 1), (2, 3), (3, 2), (3, 4), (4, 3),
+    (4, 5), (5, 4), (9, 16), (16, 9), (21, 9),
+]
+
+
+def _nearest_aspect_ratio(size_x: int, size_y: int) -> str:
+    """把请求尺寸换算成最接近的 Gemini 支持宽高比字符串，如 "21:9"。"""
+    size_x, size_y = int(size_x), int(size_y)
+    if size_x <= 0 or size_y <= 0:
+        return "1:1"
+    target = size_x / size_y
+    best = min(_GEMINI_ASPECT_RATIOS, key=lambda r: abs(target - r[0] / r[1]))
+    return f"{best[0]}:{best[1]}"
+
+
+def _normalize_size(size_x: int, size_y: int):
+    """规整尺寸。
+
+    仅当图像模型为 OpenAI Image2 系列时，强制每边 >= MIN_IMAGE_SIZE 且能被
+    SIZE_DIVISOR 整除；否则直接使用传入的 size_x / size_y。
+
+    返回 (size_x, size_y, clamped)，clamped 为可读的调整说明列表。
+    """
+    size_x, size_y = int(size_x), int(size_y)
+    # 非 OpenAI Image2 模型：使用默认尺寸，不做任何限制
+    if not _is_openai_image2_model():
+        return size_x, size_y, []
+
+    clamped = []
+
+    def _fix(value, label):
+        original = value
+        if value < MIN_IMAGE_SIZE:
+            value = MIN_IMAGE_SIZE
+        # 四舍五入到最近的 SIZE_DIVISOR 倍数，并保证不低于最小值
+        value = max(MIN_IMAGE_SIZE, round(value / SIZE_DIVISOR) * SIZE_DIVISOR)
+        if value != original:
+            clamped.append(f"{label} {original}->{value}")
+        return value
+
+    return _fix(size_x, "宽"), _fix(size_y, "高"), clamped
+
 
 # 落盘路径在 generate_image 返回字符串中的行前缀
 _SAVED_LINE_PREFIX = "- 已保存图片到路径: "
@@ -88,14 +144,8 @@ def generate_image(prompt: str, size_x: int, size_y: int,
     if not prompt or not str(prompt).strip():
         return "错误：prompt 不能为空"
 
-    # 尺寸强制最小 1024
-    clamped = []
-    if size_x < MIN_IMAGE_SIZE:
-        clamped.append(f"宽 {size_x}->{MIN_IMAGE_SIZE}")
-        size_x = MIN_IMAGE_SIZE
-    if size_y < MIN_IMAGE_SIZE:
-        clamped.append(f"高 {size_y}->{MIN_IMAGE_SIZE}")
-        size_y = MIN_IMAGE_SIZE
+    # 尺寸规整：仅 OpenAI Image2 限制最小 1024 且能被 16 整除，其它模型用默认尺寸
+    size_x, size_y, clamped = _normalize_size(size_x, size_y)
 
     generate_num = max(1, int(generate_num or 1))
     base_name = image_name.strip() if image_name and image_name.strip() else \
@@ -131,7 +181,109 @@ def generate_image(prompt: str, size_x: int, size_y: int,
     for u in urls:
         lines.append(f"- URL: {u}")
     if clamped:
-        lines.append(f"（尺寸已自动调整至最小 {MIN_IMAGE_SIZE}: {', '.join(clamped)}）")
+        lines.append(f"（尺寸已自动规整为最小 {MIN_IMAGE_SIZE} 且能被 {SIZE_DIVISOR} 整除: {', '.join(clamped)}）")
+    return "\n".join(lines)
+
+
+def generate_image_from_image(prompt: str, image_paths, size_x: int, size_y: int,
+                              generate_num: int = 1, image_name: str = None) -> str:
+    """
+    以一张或多张输入图片为基础，结合 prompt 生成新图片（图生图）并落盘到 generated_images/。
+
+    Args:
+        prompt: 修改/生成描述（必选）
+        image_paths: 输入图片路径，可以是单个字符串或字符串列表（必选）
+        size_x: 宽度（必选，最小 1024）
+        size_y: 高度（必选，最小 1024）
+        generate_num: 生成数量（可选，默认 1）
+        image_name: 文件名（可选，不传则按时间戳自动生成）
+
+    Returns:
+        字符串：生成结果说明（保存路径 / URL / 错误信息）
+    """
+    if not prompt or not str(prompt).strip():
+        return "错误：prompt 不能为空"
+
+    # 统一成列表，并校验文件存在
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
+    if not image_paths:
+        return "错误：image_paths 不能为空"
+
+    resolved_paths = []
+    for p in image_paths:
+        p = os.path.expanduser(str(p).strip())
+        if not os.path.isfile(p):
+            return f"错误：输入图片不存在: {p}"
+        resolved_paths.append(p)
+
+    # 尺寸规整：仅 OpenAI Image2 限制最小 1024 且能被 16 整除，其它模型用默认尺寸
+    size_x, size_y, clamped = _normalize_size(size_x, size_y)
+
+    generate_num = max(1, int(generate_num or 1))
+    base_name = image_name.strip() if image_name and image_name.strip() else \
+        f"image2image_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # 图生图尺寸控制：
+    # - OpenAI Image2 的 edit 端点支持 size，直接传像素尺寸；
+    # - 其它模型（如 Gemini）的 edit 端点忽略 size，只认顶层 aspect_ratio。
+    aspect_ratio = None
+    edit_kwargs = {}
+    if _is_openai_image2_model():
+        edit_kwargs["size"] = f"{size_x}x{size_y}"
+    else:
+        aspect_ratio = _nearest_aspect_ratio(size_x, size_y)
+        edit_kwargs["extra_body"] = {"aspect_ratio": aspect_ratio}
+
+    file_handles = []
+    try:
+        client = _build_image_client()
+        file_handles = [open(p, "rb") for p in resolved_paths]
+        # 单张图传文件对象，多张图传列表（兼容 OpenAI images.edit 接口）
+        image_arg = file_handles[0] if len(file_handles) == 1 else file_handles
+        # **edit_kwargs：把字典里的每个 key 展开成独立的关键字参数传给 edit。
+        # 即 {"size": ...} -> size=...，{"extra_body": ...} -> extra_body=...，
+        # 用解包实现“按需传 size 或 aspect_ratio”，避免传入多余/None 参数。
+        response = client.images.edit(
+            model=os.getenv("image_model"),
+            image=image_arg,
+            prompt=prompt,
+            n=generate_num,
+            **edit_kwargs,
+        )
+    except Exception as e:
+        return f"图生图失败：{e}"
+    finally:
+        for fh in file_handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+    saved_paths = []
+    urls = []
+    total = len(response.data)
+    for i, item in enumerate(response.data):
+        path = _save_image_data(item, base_name, i, total)
+        if path:
+            saved_paths.append(path)
+        elif getattr(item, "url", None):
+            urls.append(item.url)
+
+    if not saved_paths and not urls:
+        return "图生图失败：API 未返回可用的图片数据（无 b64_json 也无 url）"
+
+    if aspect_ratio is not None:
+        size_desc = f"宽高比 {aspect_ratio}，实际分辨率由模型决定"
+    else:
+        size_desc = f"尺寸 {size_x}x{size_y}"
+    lines = [f"已基于 {len(resolved_paths)} 张输入图生成 {total} 张图片（{size_desc}）："]
+    for p in saved_paths:
+        lines.append(f"{_SAVED_LINE_PREFIX}{p}")
+    for u in urls:
+        lines.append(f"- URL: {u}")
+    if clamped:
+        lines.append(f"（尺寸已自动规整为最小 {MIN_IMAGE_SIZE} 且能被 {SIZE_DIVISOR} 整除: {', '.join(clamped)}）")
     return "\n".join(lines)
 
 
@@ -218,7 +370,49 @@ IMAGE_GENERATION_TOOL = [
                 "required": ["prompt", "size_x", "size_y"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image_from_image",
+            "description": (
+                "图生图：以一张或多张本地输入图片为基础，结合文字描述生成新图片，"
+                "并保存到本地 generated_images/ 目录，返回保存路径。"
+                "适用于风格迁移、局部修改、参考图重绘、图片融合等场景。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "希望如何修改/生成的文字描述，越具体越好。",
+                    },
+                    "image_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "输入参考图片的本地路径列表（至少一张）。",
+                    },
+                    "size_x": {
+                        "type": "integer",
+                        "description": "输出图片宽度（像素），最小 1024。",
+                    },
+                    "size_y": {
+                        "type": "integer",
+                        "description": "输出图片高度（像素），最小 1024。",
+                    },
+                    "generate_num": {
+                        "type": "integer",
+                        "description": "可选，生成数量，默认 1。",
+                    },
+                    "image_name": {
+                        "type": "string",
+                        "description": "可选，保存文件名（不含扩展名），不传则按时间戳自动生成。",
+                    },
+                },
+                "required": ["prompt", "image_paths", "size_x", "size_y"],
+            },
+        },
+    },
 ]
 
 IMAGE_GENERATION_TOOL_HANDLERS = {
@@ -226,15 +420,29 @@ IMAGE_GENERATION_TOOL_HANDLERS = {
         kw["prompt"], kw["size_x"], kw["size_y"],
         kw.get("generate_num", 1), kw.get("image_name"),
     ),
+    "generate_image_from_image": lambda **kw: generate_image_from_image(
+        kw["prompt"], kw["image_paths"], kw["size_x"], kw["size_y"],
+        kw.get("generate_num", 1), kw.get("image_name"),
+    ),
 }
 
 
 if __name__ == "__main__":
     # 调用主工具 generate_image 生成一张图片
-    result = generate_image(
-        prompt="a simple cute cartoon cat sitting, flat design, white background",
-        size_x=1024,
-        size_y=1024,
-        image_name="unittest_image",
+    # result = generate_image(
+    #     prompt="a simple cute cartoon cat sitting, flat design, white background",
+    #     size_x=1024,
+    #     size_y=1024,
+    #     image_name="unittest_image",
+    # )
+    # print(result)
+
+    # 调用图生图工具 generate_image_from_image：给黑白稿上色
+    result_i2i = generate_image_from_image(
+        prompt="给这个黑白稿上色",
+        image_paths=r"T:\Workspace\learn-claude-code\AIAgentIMP\generated_images\image_Test.png",
+        size_x=1091,
+        size_y=515,
+        image_name="unittest_image2image",
     )
-    print(result)
+    print(result_i2i)

@@ -190,7 +190,7 @@ def agent_loop(messages: list):
             messages.append(result)
 
             # 图片生成工具：收集 vision 回喂消息（循环结束后统一追加）
-            if tool_name == "generate_image":
+            if tool_name in ("generate_image", "generate_image_from_image"):
                 vision_msg = build_vision_feedback_message(output)
                 if vision_msg:
                     pending_vision_messages.append(vision_msg)

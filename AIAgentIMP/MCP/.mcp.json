@@ -24,7 +24,7 @@
         "narwhal-unreal": {
             "transport": "streamable_http",
             "url": "http://localhost:8766/mcp",
-            "enabled": true
+            "enabled": false
         }
     }
 }
